@@ -1,0 +1,18 @@
+fundscan.io {
+    reverse_proxy 127.0.0.1:8000
+
+    # Automatic HTTPS via Let's Encrypt (Caddy handles this by default)
+    encode gzip
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options nosniff
+        X-Frame-Options DENY
+        -Server
+    }
+
+    log {
+        output file /var/log/caddy/fundscan.log
+        format json
+    }
+}

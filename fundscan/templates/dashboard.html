@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FundScan — Live Scanner</title>
+<script src="https://unpkg.com/htmx.org@1.9.12" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg: #0f1117; --surface: #1a1d27; --border: #2a2d3a;
+    --text: #e2e8f0; --muted: #64748b; --green: #22c55e; --accent: #6366f1;
+    --gold: #C9A551;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: system-ui, sans-serif;
+         font-size: 14px; line-height: 1.5; }
+  header { padding: 1rem 1.5rem; border-bottom: 1px solid var(--border);
+           display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: .5rem; }
+  header h1 { font-size: 1.2rem; font-weight: 700; letter-spacing: -.02em; }
+  header h1 span { color: var(--accent); }
+  .header-right { display: flex; align-items: center; gap: 1rem; }
+  .user-pill { font-size: 12px; color: var(--muted); }
+  .user-pill b { color: var(--text); }
+  .logout { font-size: 12px; color: var(--muted); text-decoration: none; }
+  .logout:hover { color: var(--text); }
+  .status { font-size: 12px; color: var(--muted); }
+  /* Free tier banner */
+  .tier-banner {
+    background: linear-gradient(90deg, rgba(201,165,81,.12), rgba(201,165,81,.06));
+    border-bottom: 1px solid rgba(201,165,81,.25);
+    padding: .6rem 1.5rem;
+    display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap;
+  }
+  .tier-banner p { font-size: 12.5px; color: #A7B2C4; }
+  .tier-banner p b { color: var(--gold); }
+  .tier-banner a {
+    font-size: 12px; font-weight: 600; padding: .4rem 1rem;
+    background: var(--gold); color: #221A08; border-radius: 4px;
+    text-decoration: none; white-space: nowrap; flex-shrink: 0;
+  }
+  .tier-banner a:hover { background: #D9B65F; }
+  .summary { padding: .75rem 1.5rem; background: var(--surface); border-bottom: 1px solid var(--border); }
+  .stat-value { font-weight: 700; font-size: 1rem; }
+  .stat-label { color: var(--muted); }
+  .container { padding: 1rem 1.5rem; overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; }
+  th { text-align: left; padding: .5rem .75rem; color: var(--muted);
+       font-size: 11px; text-transform: uppercase; letter-spacing: .05em;
+       border-bottom: 1px solid var(--border); white-space: nowrap; }
+  td { padding: .6rem .75rem; border-bottom: 1px solid var(--border); }
+  tr.greyed td { color: var(--muted); }
+  tbody tr:not(.chart-row):hover { background: var(--surface); cursor: pointer; }
+  .chart-row td { padding: .5rem .75rem 1rem; background: var(--surface); }
+  .note { font-size: 11px; color: var(--muted); margin-top: 1rem; }
+  @media (max-width: 600px) {
+    td:nth-child(3), th:nth-child(3) { display: none; }
+    header { flex-direction: column; align-items: flex-start; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>Fund<span>Scan</span></h1>
+  <div class="header-right">
+    <div class="status" id="status-bar"
+         hx-get="/htmx/status" hx-trigger="every 30s" hx-swap="outerHTML">
+      Initialising…
+    </div>
+    {% if user %}
+    <span class="user-pill"><b>{{ user.email }}</b> · {{ user.tier }}</span>
+    <a href="/auth/logout" class="logout">sign out</a>
+    {% endif %}
+  </div>
+</header>
+
+{% if user and user.tier == 'free' %}
+<div class="tier-banner">
+  <p>
+    <b>Free tier</b> — top 5 pairs only · data delayed 10 minutes ·
+    <b>{{ missing_count }}</b> more pair{{ 's' if missing_count != 1 else '' }} hidden
+  </p>
+  <a href="/billing/checkout">Upgrade to Pro — £20/mo</a>
+</div>
+{% endif %}
+
+<div class="summary" id="summary"
+     hx-get="/htmx/summary" hx-trigger="every 30s" hx-swap="outerHTML">
+  Loading…
+</div>
+<div class="container">
+  <table>
+    <thead>
+      <tr>
+        <th>Symbol</th><th>Exchange</th><th>Rate/8h</th>
+        <th>Net APY ▾</th><th>Breakeven cycles</th>
+      </tr>
+    </thead>
+    <tbody id="rates-body"
+           hx-get="/htmx/rows" hx-trigger="every 30s, load" hx-swap="innerHTML">
+      <tr><td colspan="5" style="color:var(--muted);text-align:center">Loading…</td></tr>
+    </tbody>
+  </table>
+  <p class="note">Net APY = gross annual yield − 1.09% round-trip fees (0.26% × 4 legs + 0.05% slippage).
+  Click a row for 7-day rate history. Rates update every 60s.
+  {% if user and user.tier == 'free' %}Data delayed 10 minutes on the free tier.{% endif %}
+  </p>
+</div>
+
+<script>
+const activeCharts = {};
+
+async function toggleChart(row) {
+  const sym = row.dataset.symbol;
+  const ex  = row.dataset.exchange;
+  const chartRowId = `chart-${sym}-${ex}`;
+  const chartRow = document.getElementById(chartRowId);
+  if (!chartRow) return;
+
+  const visible = chartRow.style.display !== 'none';
+  chartRow.style.display = visible ? 'none' : '';
+  if (visible) return;
+
+  if (activeCharts[chartRowId]) { activeCharts[chartRowId].destroy(); }
+
+  const res = await fetch(`/history/${sym}?days=7`);
+  const data = await res.json();
+  const points = data.points.filter(p => p.exchange === ex);
+  const labels = points.map(p => p.ts.slice(5, 16));
+  const values = points.map(p => +(p.net_apy * 100).toFixed(3));
+
+  const canvas = document.getElementById(`canvas-${sym}-${ex}`);
+  activeCharts[chartRowId] = new Chart(canvas, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [{
+        label: 'Net APY %',
+        data: values,
+        borderColor: '#6366f1',
+        backgroundColor: 'rgba(99,102,241,.08)',
+        borderWidth: 1.5,
+        pointRadius: 2,
+        tension: .3,
+        fill: true,
+      }]
+    },
+    options: {
+      animation: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { color: '#64748b', maxTicksLimit: 6 }, grid: { color: '#2a2d3a' } },
+        y: { ticks: { color: '#64748b', callback: v => v + '%' }, grid: { color: '#2a2d3a' } }
+      }
+    }
+  });
+}
+</script>
+</body>
+</html>

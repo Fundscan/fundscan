@@ -1,0 +1,565 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FundScan — Funding rate intelligence, net of costs</title>
+<meta name="description" content="Institutional-grade funding rate analytics across major venues, ranked by net annualised yield after execution costs. No API keys required.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,500;0,8..60,600;1,8..60,400&family=Instrument+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --navy:#0A1424;          /* base */
+  --navy-2:#0F1B30;        /* raised */
+  --navy-3:#16233C;        /* higher / hover */
+  --ivory:#EEF1F6;         /* primary text */
+  --soft:#A7B2C4;          /* secondary */
+  --mist:#67748A;          /* tertiary */
+  --hairline:rgba(167,178,196,.13);
+  --hairline-2:rgba(167,178,196,.24);
+  --gold:#C9A551;          /* premium accent */
+  --gold-dim:#8A7238;
+  --green:#3FBE8E;         /* positive */
+  --red:#D96A6A;
+  --serif:'Source Serif 4',Georgia,serif;
+  --sans:'Instrument Sans',system-ui,sans-serif;
+  --mono:'IBM Plex Mono',ui-monospace,monospace;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{background:var(--navy);color:var(--ivory);font-family:var(--sans);font-size:17px;line-height:1.7;-webkit-font-smoothing:antialiased;overflow-x:hidden}
+::selection{background:var(--gold);color:var(--navy)}
+a{color:inherit}
+.up{color:var(--green)}
+.dn{color:var(--red)}
+
+/* ---------- ambient background ---------- */
+.ambient{position:fixed;inset:0;z-index:-2;pointer-events:none;
+  background:
+    radial-gradient(900px 500px at 15% -5%,rgba(201,165,81,.06),transparent 60%),
+    radial-gradient(1100px 600px at 90% 15%,rgba(63,190,142,.045),transparent 60%),
+    radial-gradient(800px 700px at 50% 110%,rgba(201,165,81,.05),transparent 60%);
+  animation:drift 26s ease-in-out infinite alternate}
+@keyframes drift{from{transform:translateY(0) scale(1)}to{transform:translateY(-30px) scale(1.03)}}
+.grid-bg{position:fixed;inset:0;z-index:-1;pointer-events:none;opacity:.35;
+  background-image:linear-gradient(rgba(167,178,196,.045) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(167,178,196,.045) 1px,transparent 1px);
+  background-size:56px 56px;
+  mask-image:radial-gradient(1200px 800px at 50% 0%,black 30%,transparent 85%)}
+
+/* ---------- reveals ---------- */
+.rv{opacity:0;transform:translateY(20px);transition:opacity 1s ease,transform 1s cubic-bezier(.16,.7,.2,1)}
+.rv.in{opacity:1;transform:none}
+.rv-d1{transition-delay:.12s}.rv-d2{transition-delay:.24s}.rv-d3{transition-delay:.36s}
+
+/* ---------- nav + animated logo ---------- */
+nav{position:fixed;top:0;left:0;right:0;z-index:50;display:flex;align-items:center;justify-content:space-between;
+  padding:16px 48px;background:rgba(10,20,36,.78);backdrop-filter:blur(16px);border-bottom:1px solid var(--hairline)}
+.logo{display:flex;align-items:center;gap:12px;text-decoration:none}
+.logo-mark{width:34px;height:34px;flex-shrink:0}
+.logo-mark .ring{fill:none;stroke:var(--gold);stroke-width:1.6;stroke-dasharray:97;stroke-dashoffset:97;
+  animation:draw 1.6s ease forwards .3s}
+.logo-mark .bar{fill:none;stroke:var(--green);stroke-width:2.2;stroke-linecap:round;stroke-dasharray:40;stroke-dashoffset:40;
+  animation:draw 1s ease forwards 1.2s}
+.logo-mark .sweep{fill:none;stroke:var(--gold);stroke-width:1.6;stroke-linecap:round;opacity:.9;
+  transform-origin:17px 17px;animation:sweep 4.5s cubic-bezier(.6,.1,.3,.9) infinite 2s}
+.logo-mark .dot{fill:var(--green);animation:dotpulse 2.6s ease-in-out infinite 2s}
+@keyframes draw{to{stroke-dashoffset:0}}
+@keyframes sweep{0%{transform:rotate(0deg);opacity:0}8%{opacity:.9}45%{transform:rotate(360deg);opacity:.9}55%{opacity:0}100%{transform:rotate(360deg);opacity:0}}
+@keyframes dotpulse{0%,100%{opacity:1}50%{opacity:.3}}
+.logo-word{font-family:var(--serif);font-weight:600;font-size:21px;letter-spacing:-.01em}
+.logo-word i{font-style:normal;color:var(--gold)}
+.nav-links{display:flex;gap:34px;align-items:center;font-size:14.5px;color:var(--soft);font-weight:500}
+.nav-links a{text-decoration:none;position:relative;transition:color .25s}
+.nav-links a:not(.btn)::after{content:"";position:absolute;left:0;bottom:-5px;width:0;height:1px;background:var(--gold);transition:width .3s ease}
+.nav-links a:not(.btn):hover{color:var(--ivory)}
+.nav-links a:not(.btn):hover::after{width:100%}
+.btn{display:inline-block;font-family:var(--sans);font-weight:500;font-size:15px;text-decoration:none;
+  padding:12px 26px;border-radius:4px;border:1px solid var(--hairline-2);color:var(--ivory);
+  transition:all .25s ease;cursor:pointer;background:transparent;letter-spacing:.01em;position:relative;overflow:hidden}
+.btn:hover{border-color:var(--gold);color:var(--gold)}
+.btn-solid{background:var(--gold);border-color:var(--gold);color:#221A08;font-weight:600}
+.btn-solid::before{content:"";position:absolute;top:0;left:-80%;width:50%;height:100%;
+  background:linear-gradient(105deg,transparent,rgba(255,255,255,.35),transparent);transform:skewX(-20deg)}
+.btn-solid:hover::before{animation:shine .8s ease}
+@keyframes shine{to{left:130%}}
+.btn-solid:hover{background:#D9B65F;border-color:#D9B65F;color:#221A08}
+.btn-big{font-size:15.5px;padding:15px 34px}
+
+/* ---------- data strip ---------- */
+.strip-wrap{margin-top:67px;border-bottom:1px solid var(--hairline);background:rgba(15,27,48,.6);overflow:hidden}
+.strip{display:flex;width:max-content;animation:strip 55s linear infinite}
+.strip-wrap:hover .strip{animation-play-state:paused}
+.strip span{font-family:var(--mono);font-size:12px;letter-spacing:.02em;padding:10px 26px;white-space:nowrap;
+  color:var(--mist);border-right:1px solid var(--hairline)}
+.strip span b{color:var(--soft);font-weight:500}
+@keyframes strip{from{transform:translateX(0)}to{transform:translateX(-50%)}}
+
+/* ---------- hero ---------- */
+.hero{max-width:1140px;margin:0 auto;padding:104px 48px 70px;text-align:center;position:relative}
+.kicker{font-family:var(--mono);font-size:12px;letter-spacing:.24em;text-transform:uppercase;color:var(--gold);margin-bottom:30px}
+h1{font-family:var(--serif);font-size:clamp(38px,5.4vw,70px);line-height:1.1;letter-spacing:-.015em;font-weight:500;max-width:900px;margin:0 auto 28px}
+h1 em{font-style:italic;color:var(--gold)}
+.typed-line{display:block;min-height:1.25em}
+.caret{display:inline-block;width:2px;height:.85em;background:var(--gold);vertical-align:-.06em;margin-left:5px;animation:blink 1.1s infinite}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:0}}
+.sub{font-size:19px;color:var(--soft);max-width:640px;margin:0 auto 44px;line-height:1.75}
+.hero-ctas{display:flex;gap:16px;justify-content:center;flex-wrap:wrap}
+.assure{font-family:var(--mono);font-size:12.5px;color:var(--mist);margin-top:28px;letter-spacing:.06em}
+.assure b{color:var(--green);font-weight:500}
+
+/* ---------- board ---------- */
+.board-wrap{max-width:1000px;margin:0 auto;padding:20px 48px 30px;perspective:1200px}
+.board{background:linear-gradient(180deg,var(--navy-2),rgba(15,27,48,.7));border:1px solid var(--hairline);border-radius:8px;overflow:hidden;
+  box-shadow:0 40px 90px -30px rgba(0,0,0,.6),0 0 0 1px rgba(201,165,81,.06);
+  transform:rotateX(4deg);transform-origin:top;transition:transform 1s ease}
+.board.in{transform:rotateX(0)}
+.board-head{display:flex;justify-content:space-between;align-items:center;padding:18px 28px;border-bottom:1px solid var(--hairline)}
+.board-title{font-family:var(--serif);font-size:16.5px;font-weight:600}
+.board-live{font-family:var(--mono);font-size:11.5px;color:var(--green);letter-spacing:.12em}
+.board-live::before{content:"● ";animation:dotpulse 2.4s ease-in-out infinite}
+.brow{display:grid;grid-template-columns:1.5fr .9fr .9fr .9fr .9fr;align-items:center;padding:14px 28px;border-bottom:1px solid rgba(167,178,196,.07);
+  font-size:14.5px;opacity:0;transform:translateY(10px);transition:background .25s}
+.brow.on{animation:browin .7s ease forwards}
+.brow:hover{background:rgba(201,165,81,.04)}
+@keyframes browin{to{opacity:1;transform:none}}
+.brow.head{font-family:var(--mono);font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--mist)}
+.brow .sym{font-weight:600;letter-spacing:.01em}
+.brow .sym small{display:block;font-weight:400;color:var(--mist);font-size:11.5px;font-family:var(--mono);letter-spacing:.06em}
+.brow .num{font-family:var(--mono);font-size:14px}
+.brow .flag{font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;color:var(--gold-dim)}
+.brow.dim .sym,.brow.dim .num{color:var(--mist)}
+.spark{width:100%;height:26px}
+.spark path{fill:none;stroke:var(--green);stroke-width:1.6;stroke-dasharray:200;stroke-dashoffset:200}
+.brow.on .spark path{animation:draw 1.4s ease forwards .3s}
+.brow.dim .spark path{stroke:var(--mist)}
+
+/* ---------- sections ---------- */
+section{max-width:1140px;margin:0 auto;padding:100px 48px;position:relative}
+.rule{max-width:1140px;margin:0 auto;padding:0 48px}
+.rule hr{border:none;border-top:1px solid var(--hairline)}
+.sec-kicker{font-family:var(--mono);font-size:11.5px;letter-spacing:.22em;text-transform:uppercase;color:var(--gold);margin-bottom:20px;display:flex;align-items:center;gap:14px}
+.sec-kicker::before{content:"";width:0;height:1px;background:var(--gold);transition:width .8s ease .2s}
+.rv.in .sec-kicker::before{width:34px}
+h2{font-family:var(--serif);font-size:clamp(28px,3.6vw,46px);letter-spacing:-.01em;line-height:1.18;font-weight:500;margin-bottom:20px;max-width:760px}
+.lede{color:var(--soft);font-size:18px;max-width:660px}
+
+/* ---------- fee truth ---------- */
+.truth{display:grid;grid-template-columns:1fr 1fr;gap:72px;align-items:center;margin-top:56px;
+  background:linear-gradient(160deg,var(--navy-2),rgba(15,27,48,.4));border:1px solid var(--hairline);border-radius:8px;padding:56px 48px;position:relative;overflow:hidden}
+.truth::after{content:"";position:absolute;inset:0;pointer-events:none;
+  background:radial-gradient(500px 260px at 85% 15%,rgba(201,165,81,.07),transparent)}
+.big-apy{font-family:var(--serif);font-weight:500;font-size:clamp(56px,7vw,94px);letter-spacing:-.02em;line-height:1;transition:color .6s}
+.big-apy-label{font-family:var(--mono);font-size:12px;color:var(--mist);text-transform:uppercase;letter-spacing:.2em;margin-top:16px}
+.replay{margin-top:34px;font-family:var(--mono);font-size:12.5px;color:var(--soft);background:none;
+  border:1px solid var(--hairline-2);border-radius:4px;padding:10px 20px;cursor:pointer;transition:all .25s;letter-spacing:.05em}
+.replay:hover{border-color:var(--gold);color:var(--gold)}
+.fee-lines{display:flex;flex-direction:column;font-size:15.5px;position:relative;z-index:1}
+.fee-line{display:flex;justify-content:space-between;padding:15px 2px;border-bottom:1px solid var(--hairline);
+  opacity:.3;transition:opacity .5s,transform .5s;transform:translateX(8px)}
+.fee-line .val{font-family:var(--mono);font-size:14.5px}
+.fee-line.lit{opacity:1;transform:none}
+.fee-line.total{border-bottom:none;border-top:2px solid var(--gold-dim);font-weight:600;margin-top:8px;padding-top:18px;font-size:16.5px}
+
+/* ---------- pillars ---------- */
+.pillars{display:grid;grid-template-columns:repeat(3,1fr);gap:20px;margin-top:60px}
+.pillar{padding:36px 32px;border:1px solid var(--hairline);border-radius:8px;background:linear-gradient(180deg,var(--navy-2),transparent);
+  position:relative;transition:transform .35s ease,border-color .35s;overflow:hidden}
+.pillar::before{content:"";position:absolute;top:0;left:0;right:0;height:1px;
+  background:linear-gradient(90deg,transparent,var(--gold),transparent);opacity:0;transition:opacity .4s}
+.pillar:hover{transform:translateY(-6px);border-color:rgba(201,165,81,.35)}
+.pillar:hover::before{opacity:1}
+.pillar .tag{font-family:var(--mono);font-size:11px;letter-spacing:.18em;color:var(--gold);text-transform:uppercase;display:block;margin-bottom:16px}
+.pillar h3{font-family:var(--serif);font-size:21px;font-weight:600;margin-bottom:12px;letter-spacing:-.01em}
+.pillar p{color:var(--soft);font-size:15.5px}
+
+/* ---------- figures band ---------- */
+.band{border-top:1px solid var(--hairline);border-bottom:1px solid var(--hairline);
+  background:linear-gradient(180deg,rgba(201,165,81,.05),transparent 70%);margin-top:50px}
+.band-inner{max-width:1140px;margin:0 auto;padding:78px 48px;display:grid;grid-template-columns:repeat(3,1fr);gap:48px;text-align:center}
+.fig .n{font-family:var(--serif);font-size:clamp(42px,5vw,62px);font-weight:500;letter-spacing:-.02em;color:var(--gold)}
+.fig .l{font-size:14px;color:var(--soft);margin-top:10px;letter-spacing:.02em}
+
+/* ---------- process ---------- */
+.process{display:grid;grid-template-columns:repeat(3,1fr);gap:56px;margin-top:60px}
+.proc h3{font-family:var(--serif);font-size:22px;font-weight:600;margin-bottom:12px}
+.proc .roman{font-family:var(--serif);font-style:italic;color:var(--gold);font-size:17px;display:block;margin-bottom:14px}
+.proc p{color:var(--soft);font-size:15.5px}
+
+/* ---------- pricing ---------- */
+.plans{display:grid;grid-template-columns:1fr 1fr;gap:28px;margin-top:56px;max-width:880px}
+.plan{border:1px solid var(--hairline);border-radius:8px;padding:44px 40px;background:linear-gradient(180deg,var(--navy-2),transparent);
+  transition:transform .35s,border-color .35s,box-shadow .35s;position:relative;overflow:hidden}
+.plan:hover{transform:translateY(-4px);box-shadow:0 24px 60px -24px rgba(0,0,0,.5)}
+.plan.pro{border-color:rgba(201,165,81,.5)}
+.plan.pro::before{content:"";position:absolute;top:0;left:0;right:0;height:2px;
+  background:linear-gradient(90deg,transparent,var(--gold),transparent);
+  animation:goldline 4s ease-in-out infinite}
+@keyframes goldline{0%,100%{opacity:.4}50%{opacity:1}}
+.plan .plabel{font-family:var(--mono);font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:var(--mist);margin-bottom:8px}
+.plan.pro .plabel{color:var(--gold)}
+.plan h3{font-family:var(--serif);font-size:24px;font-weight:600}
+.price{font-family:var(--serif);font-size:46px;font-weight:500;margin:18px 0 6px;letter-spacing:-.02em}
+.price small{font-family:var(--sans);font-size:15px;color:var(--mist);font-weight:400}
+.plan ul{list-style:none;margin:26px 0 34px;display:flex;flex-direction:column;gap:13px;font-size:15.5px;color:var(--soft)}
+.plan ul li{padding-left:22px;position:relative}
+.plan ul li::before{content:"—";position:absolute;left:0;color:var(--gold)}
+.plan ul li.off{color:var(--mist)}
+.plan ul li.off::before{content:"·";color:var(--mist)}
+
+/* ---------- faq ---------- */
+.faq{max-width:800px;margin-top:48px}
+details{border-bottom:1px solid var(--hairline)}
+summary{cursor:pointer;list-style:none;display:flex;justify-content:space-between;align-items:baseline;gap:24px;
+  padding:26px 2px;font-family:var(--serif);font-size:19px;font-weight:500;transition:color .25s}
+summary:hover{color:var(--gold)}
+summary::-webkit-details-marker{display:none}
+summary .pm{font-family:var(--mono);color:var(--mist);transition:transform .35s;font-size:18px;flex-shrink:0}
+details[open] .pm{transform:rotate(45deg);color:var(--gold)}
+.ans{padding:0 2px 28px;color:var(--soft);font-size:16px;max-width:660px}
+.ans b{color:var(--ivory);font-weight:600}
+
+/* ---------- final ---------- */
+.final{text-align:center;padding:120px 48px;position:relative}
+.final::before{content:"";position:absolute;inset:0;pointer-events:none;
+  background:radial-gradient(600px 300px at 50% 60%,rgba(201,165,81,.07),transparent)}
+.final h2{margin:0 auto 18px}
+.final .lede{margin:0 auto 40px}
+
+/* ---------- footer ---------- */
+footer{border-top:1px solid var(--hairline);background:rgba(15,27,48,.5)}
+.foot-inner{max-width:1140px;margin:0 auto;padding:44px 48px 20px;display:flex;justify-content:space-between;align-items:center;
+  color:var(--soft);font-size:14px;flex-wrap:wrap;gap:16px}
+.foot-inner a{text-decoration:none;transition:color .2s}
+.foot-inner a:hover{color:var(--gold)}
+.disclaimer{max-width:1140px;margin:0 auto;padding:8px 48px 48px;color:var(--mist);font-size:12.5px;line-height:1.75}
+
+@media (max-width:900px){
+  nav{padding:14px 22px}
+  .nav-links{display:none}
+  .hero{padding:88px 22px 50px}
+  .board-wrap,section,.rule{padding-left:22px;padding-right:22px}
+  .brow{grid-template-columns:1.4fr .9fr .9fr .9fr}
+  .brow .cspark{display:none}
+  .truth{grid-template-columns:1fr;gap:44px;padding:40px 26px}
+  .pillars{grid-template-columns:1fr}
+  .band-inner,.process{grid-template-columns:1fr;gap:40px}
+  .plans{grid-template-columns:1fr}
+  .foot-inner,.disclaimer{padding-left:22px;padding-right:22px}
+}
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:.01ms !important;animation-iteration-count:1 !important;transition-duration:.01ms !important}
+  .rv{opacity:1;transform:none}
+  .board{transform:none}
+  .fee-line,.brow{opacity:1;transform:none}
+}
+</style>
+</head>
+<body>
+<div class="ambient" aria-hidden="true"></div>
+<div class="grid-bg" aria-hidden="true"></div>
+
+<nav>
+  <a class="logo" href="/" aria-label="FundScan home">
+    <svg class="logo-mark" viewBox="0 0 34 34" aria-hidden="true">
+      <circle class="ring" cx="17" cy="17" r="15.5"/>
+      <path class="sweep" d="M17 17 L17 3.5"/>
+      <path class="bar" d="M10 21 L15 16 L19 19 L24 12"/>
+      <circle class="dot" cx="24" cy="12" r="2"/>
+    </svg>
+    <span class="logo-word">FundScan<i>.</i></span>
+  </a>
+  <div class="nav-links">
+    <a href="#truth">Methodology</a>
+    <a href="#coverage">Coverage</a>
+    <a href="#pricing">Pricing</a>
+    <a href="#faq">Questions</a>
+    <a href="/auth/request" class="btn btn-solid">Request access</a>
+  </div>
+</nav>
+
+{# Strip is server-rendered — spans duplicated for seamless CSS loop animation #}
+<div class="strip-wrap" aria-hidden="true">
+  <div class="strip" id="strip">{{ strip_html | safe }}</div>
+</div>
+
+<header class="hero">
+  <div class="kicker rv in">Funding rate intelligence · Bybit — Binance — OKX</div>
+  <h1>The yield that remains<br><span class="typed-line"><em id="typed"></em><span class="caret"></span></span></h1>
+  <p class="sub">Most services publish gross funding rates. FundScan ranks every perpetual pair by net annualised yield after all execution costs — and identifies the positions that would not cover their own fees.</p>
+  <div class="hero-ctas">
+    <a href="/auth/request" class="btn btn-solid btn-big">Begin with the free tier</a>
+    <a href="#truth" class="btn btn-big">Review the methodology</a>
+  </div>
+  <p class="assure"><b>NO EXCHANGE API KEYS</b> · READ-ONLY PUBLIC DATA · NO CUSTODY</p>
+</header>
+
+<div class="board-wrap">
+  <div class="board" id="board" role="img" aria-label="Preview of FundScan analytics showing funding opportunities ranked by net annualised yield">
+    <div class="board-head">
+      <span class="board-title">Current opportunities</span>
+      <span class="board-live">LIVE</span>
+    </div>
+    <div class="brow head"><span>Instrument</span><span>Rate / 8h</span><span>Net APY</span><span class="cspark">7-day</span><span>Breakeven</span></div>
+    {# Board rows are server-rendered from live scanner data #}
+    {{ board_rows | safe }}
+  </div>
+</div>
+
+<div class="rule"><hr></div>
+
+<section id="truth">
+  <div class="rv"><div class="sec-kicker">Methodology</div>
+  <h2>A headline yield is not a return.<br>Costs decide what remains.</h2>
+  <p class="lede">A delta-neutral funding position requires four executions: opening and closing both legs. Each carries cost. The figure below begins as the market advertises it — and ends as your account would record it.</p></div>
+
+  <div class="truth rv rv-d1">
+    <div>
+      <div class="big-apy" id="apy">+24.60%</div>
+      <div class="big-apy-label" id="apyLabel">Gross annualised yield</div>
+      <br>
+      <button class="replay" id="replay">↻ REPLAY THE CALCULATION</button>
+    </div>
+    <div class="fee-lines" id="feeLines">
+      <div class="fee-line"><span>Gross funding yield</span><span class="val up">+24.60%</span></div>
+      <div class="fee-line"><span>Opening execution — spot leg</span><span class="val dn">−0.26%</span></div>
+      <div class="fee-line"><span>Opening execution — perpetual leg</span><span class="val dn">−0.26%</span></div>
+      <div class="fee-line"><span>Closing execution — spot leg</span><span class="val dn">−0.26%</span></div>
+      <div class="fee-line"><span>Closing execution — perpetual leg</span><span class="val dn">−0.26%</span></div>
+      <div class="fee-line"><span>Slippage provision</span><span class="val dn">−0.05%</span></div>
+      <div class="fee-line total"><span>Net annualised yield</span><span class="val up" id="netFigure">+18.40%</span></div>
+    </div>
+  </div>
+</section>
+
+<div class="rule"><hr></div>
+
+<section id="coverage">
+  <div class="rv"><div class="sec-kicker">The service</div>
+  <h2>Three disciplines, applied continuously.</h2></div>
+
+  <div class="pillars">
+    <div class="pillar rv rv-d1">
+      <span class="tag">Net figures</span>
+      <h3>Cost-adjusted ranking</h3>
+      <p>Every instrument is ranked by yield net of all four execution legs and a slippage provision. Positions that cannot cover their own costs are marked below cost — visibly, on every screen.</p>
+    </div>
+    <div class="pillar rv rv-d2">
+      <span class="tag">Time to profit</span>
+      <h3>Breakeven cycles</h3>
+      <p>The number of funding settlements required before costs are recovered, stated on every instrument. The measure that distinguishes an opportunity from an obligation.</p>
+    </div>
+    <div class="pillar rv rv-d3">
+      <span class="tag">Notification</span>
+      <h3>Threshold alerts</h3>
+      <p>Funding conditions change at all hours. Define a net-yield threshold and receive a Telegram notification the moment it is crossed — measured, rate-limited, never promotional.</p>
+    </div>
+  </div>
+</section>
+
+{# Stats band: pairs_count from live data; 60s and 0 are fixed by design #}
+<div class="band">
+  <div class="band-inner">
+    <div class="fig rv"><div class="n" data-count="{{ pairs_count }}">0</div><div class="l">perpetual pairs under continuous coverage</div></div>
+    <div class="fig rv rv-d1"><div class="n" data-count="60" data-suffix="s">0</div><div class="l">refresh interval, without interruption</div></div>
+    <div class="fig rv rv-d2"><div class="n" data-count="0">0</div><div class="l">API keys requested — by design</div></div>
+  </div>
+</div>
+
+<section>
+  <div class="rv"><div class="sec-kicker">Engagement</div>
+  <h2>How the service operates.</h2></div>
+  <div class="process">
+    <div class="proc rv rv-d1"><span class="roman">i.</span><h3>Observe</h3><p>Public funding data is drawn from each venue every sixty seconds and passed through the cost model — no account connection required at any point.</p></div>
+    <div class="proc rv rv-d2"><span class="roman">ii.</span><h3>Assess</h3><p>Instruments are ranked by net yield. Illiquid outliers are flagged rather than promoted; sub-cost positions are set aside. What remains is the defensible list.</p></div>
+    <div class="proc rv rv-d3"><span class="roman">iii.</span><h3>Decide</h3><p>Execution remains entirely yours, on your own venue, under your own risk parameters. FundScan informs the decision; it never makes it.</p></div>
+  </div>
+</section>
+
+<div class="rule"><hr></div>
+
+<section id="pricing">
+  <div class="rv"><div class="sec-kicker">Terms</div>
+  <h2>Complimentary to verify.<br>Subscribed when it earns its place.</h2>
+  <p class="lede">The complimentary tier exists so the figures can be checked against the venues directly. Subscribe when the alerting alone justifies the fee.</p></div>
+
+  <div class="plans">
+    <div class="plan rv rv-d1">
+      <div class="plabel">Complimentary</div>
+      <h3>Observer</h3>
+      <div class="price">£0<small> · indefinitely</small></div>
+      <ul>
+        <li>Five leading instruments by net yield</li>
+        <li>Full cost and breakeven methodology</li>
+        <li>Figures delayed ten minutes</li>
+        <li class="off">Live data across all venues</li>
+        <li class="off">Threshold notifications</li>
+        <li class="off">Historical rate series</li>
+      </ul>
+      <a href="/auth/request" class="btn" style="width:100%;text-align:center">Begin verification</a>
+    </div>
+    <div class="plan pro rv rv-d2">
+      <div class="plabel">Full service</div>
+      <h3>Principal</h3>
+      <div class="price">£20<small> · per month</small></div>
+      <ul>
+        <li>Complete coverage, live, all venues</li>
+        <li>Telegram notifications on your thresholds</li>
+        <li>Seven-day rate history per instrument</li>
+        <li>Illiquidity flags on statistical outliers</li>
+        <li>Cancellation at any time, without notice period</li>
+      </ul>
+      <a href="/billing/checkout" class="btn btn-solid" style="width:100%;text-align:center">Subscribe</a>
+    </div>
+  </div>
+</section>
+
+<div class="rule"><hr></div>
+
+<section id="faq">
+  <div class="rv"><div class="sec-kicker">Due diligence</div>
+  <h2>The questions worth asking.</h2></div>
+  <div class="faq rv rv-d1">
+    <details>
+      <summary>How does this differ from free rate pages such as CoinGlass?<span class="pm">+</span></summary>
+      <p class="ans">Free services publish <b>gross</b> rates. FundScan publishes what survives execution: yield net of all four legs and slippage, with breakeven cycles stated on every instrument. A gross rate without its costs is an incomplete figure — and incomplete figures are how apparent opportunities become realised losses.</p>
+    </details>
+    <details>
+      <summary>Are exchange API keys required?<span class="pm">+</span></summary>
+      <p class="ans"><b>No — at no point.</b> FundScan reads public market data exclusively. There is no account connection, no credential storage, and no mechanism by which the service could access client funds, even in principle.</p>
+    </details>
+    <details>
+      <summary>Does the service execute trades?<span class="pm">+</span></summary>
+      <p class="ans">No, by design. FundScan is an analytics service, not an execution venue or managed strategy. All positions are opened and closed by you, on your own accounts, under your own judgement. This division keeps you in control and keeps our incentives clean.</p>
+    </details>
+    <details>
+      <summary>An instrument shows an extreme yield. Is it genuine?<span class="pm">+</span></summary>
+      <p class="ans">Genuine as printed; rarely achievable at size. Extreme rates concentrate in illiquid instruments where depth and slippage consume the apparent edge. FundScan flags statistical outliers rather than featuring them. A rate that cannot be traded at reasonable size is not an opportunity — it is an advertisement.</p>
+    </details>
+    <details>
+      <summary>How is data accuracy assured?<span class="pm">+</span></summary>
+      <p class="ans">By invitation to verify. The complimentary tier exists so any figure can be compared against the venue's own published funding page. If our figures do not reconcile with the source, we have failed at the only task we have.</p>
+    </details>
+    <details>
+      <summary>Will subscribers profit?<span class="pm">+</span></summary>
+      <p class="ans"><b>No such assurance is made — and none should be accepted from anyone.</b> Funding strategies carry genuine risk: rates invert, executions slip, and conditions can remain unfavourable for extended periods. FundScan provides accurate figures on which to base decisions. The decisions, and their outcomes, remain yours.</p>
+    </details>
+  </div>
+</section>
+
+<div class="final">
+  <h2 class="rv">Begin with the honest figure.</h2>
+  <p class="lede rv rv-d1">Complimentary tier. No payment details. No API keys. Verify the service against the venues, then decide.</p>
+  <a href="/auth/request" class="btn btn-solid btn-big rv rv-d2">Open the live scanner</a>
+</div>
+
+<footer>
+  <div class="foot-inner">
+    <div class="logo" style="gap:9px">
+      <svg class="logo-mark" viewBox="0 0 34 34" style="width:24px;height:24px" aria-hidden="true">
+        <circle cx="17" cy="17" r="15.5" fill="none" stroke="var(--gold)" stroke-width="1.6"/>
+        <path d="M10 21 L15 16 L19 19 L24 12" fill="none" stroke="var(--green)" stroke-width="2.2" stroke-linecap="round"/>
+        <circle cx="24" cy="12" r="2" fill="var(--green)"/>
+      </svg>
+      <span class="logo-word" style="font-size:16px">FundScan<i>.</i></span>
+    </div>
+    <div style="display:flex;gap:28px">
+      <a href="#truth">Methodology</a>
+      <a href="/health">Status</a>
+      <a href="#">Changelog</a>
+      <a href="#">Contact</a>
+    </div>
+  </div>
+  <p class="disclaimer">FundScan is a market-data and analytics service. It does not execute transactions, hold client assets, or provide investment advice. All figures are estimates derived from public exchange data and a standardised cost model; realised results depend on venue fee tiers, execution quality, and market conditions. Cryptoasset trading involves substantial risk and may not be subject to regulatory protection in your jurisdiction. Capital should never be committed that cannot be lost in full.</p>
+</footer>
+
+<script>
+/* typing hero */
+const phrases=["after costs.","after execution.","after honesty."];
+const typedEl=document.getElementById('typed');
+let pi=0,ci=0,del=false;
+function type(){
+  const p=phrases[pi];
+  typedEl.textContent=p.slice(0,ci);
+  if(!del){ if(ci<p.length){ci++;setTimeout(type,75)} else {del=true;setTimeout(type,2400)} }
+  else { if(ci>0){ci--;setTimeout(type,38)} else {del=false;pi=(pi+1)%phrases.length;setTimeout(type,420)} }
+}
+type();
+
+/* strip is server-rendered — no JS needed to build it */
+
+/* reveals */
+const io=new IntersectionObserver(es=>{es.forEach(e=>{if(e.isIntersecting){e.target.classList.add('in');io.unobserve(e.target)}})},{threshold:.16});
+document.querySelectorAll('.rv').forEach(el=>io.observe(el));
+
+/* board tilt-in + staggered rows + ticking APY numbers */
+const board=document.getElementById('board');
+const bio=new IntersectionObserver(es=>{es.forEach(e=>{
+  if(!e.isIntersecting)return;
+  board.classList.add('in');
+  const rows=[...board.querySelectorAll('.brow')];
+  rows.forEach((r,i)=>setTimeout(()=>{
+    r.classList.add('on');
+    const tick=r.querySelector('[data-tick]');
+    if(tick){
+      const target=+tick.dataset.tick,t0=performance.now(),dur=1300;
+      (function f(t){const p=Math.min((t-t0)/dur,1),ez=1-Math.pow(1-p,3);
+        tick.textContent="+"+(target*ez).toFixed(2)+"%";
+        if(p<1)requestAnimationFrame(f)})(t0);
+    }
+  },200+i*180));
+  bio.unobserve(board);
+})},{threshold:.3});
+bio.observe(board);
+
+/* counters */
+const cio=new IntersectionObserver(es=>{es.forEach(e=>{
+  if(!e.isIntersecting)return;
+  const el=e.target,target=+el.dataset.count,suf=el.dataset.suffix||"";
+  const t0=performance.now(),dur=1600;
+  (function tick(t){const p=Math.min((t-t0)/dur,1),ez=1-Math.pow(1-p,3);
+    el.textContent=Math.round(target*ez)+suf;
+    if(p<1)requestAnimationFrame(tick)})(t0);
+  cio.unobserve(el);
+})},{threshold:.6});
+document.querySelectorAll('.fig .n').forEach(el=>cio.observe(el));
+
+/* fee truth */
+const apyEl=document.getElementById('apy'),apyLabel=document.getElementById('apyLabel');
+const feeLines=[...document.querySelectorAll('#feeLines .fee-line')];
+const seq=[
+  {val:24.60,label:"Gross annualised yield",color:"var(--green)",line:0},
+  {val:23.56,label:"After opening — spot leg",color:"var(--ivory)",line:1},
+  {val:22.52,label:"After opening — perpetual leg",color:"var(--ivory)",line:2},
+  {val:21.48,label:"After closing — spot leg",color:"var(--ivory)",line:3},
+  {val:20.44,label:"After closing — perpetual leg",color:"var(--ivory)",line:4},
+  {val:18.40,label:"Net annualised yield",color:"var(--green)",line:5}
+];
+let played=false,timers=[];
+function tween(from,to,ms){
+  const t0=performance.now();
+  (function f(t){const p=Math.min((t-t0)/ms,1),e=1-Math.pow(1-p,2);
+    apyEl.textContent="+"+(from+(to-from)*e).toFixed(2)+"%";
+    if(p<1)requestAnimationFrame(f)})(t0);
+}
+function play(){
+  timers.forEach(clearTimeout);timers=[];
+  feeLines.forEach(l=>l.classList.remove('lit'));
+  let prev=seq[0].val;
+  seq.forEach((st,i)=>{
+    timers.push(setTimeout(()=>{
+      feeLines[st.line]&&feeLines[st.line].classList.add('lit');
+      if(i===seq.length-1)feeLines[feeLines.length-1].classList.add('lit');
+      tween(prev,st.val,750);prev=st.val;
+      apyEl.style.color=st.color;
+      apyLabel.textContent=st.label;
+    },1000+i*1100));
+  });
+}
+const tio=new IntersectionObserver(es=>{es.forEach(e=>{if(e.isIntersecting&&!played){played=true;play()}})},{threshold:.4});
+tio.observe(document.querySelector('.truth'));
+document.getElementById('replay').addEventListener('click',play);
+</script>
+</body>
+</html>

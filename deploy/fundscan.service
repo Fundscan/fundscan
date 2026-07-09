@@ -1,0 +1,21 @@
+[Unit]
+Description=FundScan API
+After=network.target
+
+[Service]
+Type=simple
+User=fundscan
+WorkingDirectory=/opt/fundscan
+EnvironmentFile=/opt/fundscan/.env
+ExecStart=/opt/fundscan/venv/bin/uvicorn fundscan.app:app \
+    --host 127.0.0.1 \
+    --port 8000 \
+    --workers 2 \
+    --log-level info
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
