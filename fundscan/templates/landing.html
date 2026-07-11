@@ -188,10 +188,11 @@ h2{font-family:var(--serif);font-size:clamp(28px,3.6vw,46px);letter-spacing:-.01
 .proc p{color:var(--soft);font-size:15.5px}
 
 /* ---------- pricing ---------- */
-.plans{display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-top:56px;max-width:900px;align-items:start}
+.plans{display:grid;grid-template-columns:1fr 1fr;gap:32px;margin-top:56px;max-width:860px;align-items:stretch;margin-left:auto;margin-right:auto}
 .plan{border:1px solid var(--hairline);border-radius:12px;padding:44px 40px;
   background:linear-gradient(160deg,var(--navy-2) 0%,var(--navy) 100%);
-  transition:transform .35s,box-shadow .35s;position:relative;overflow:hidden}
+  transition:transform .35s,box-shadow .35s;position:relative;overflow:hidden;
+  display:flex;flex-direction:column}
 .plan:hover{transform:translateY(-4px);box-shadow:0 28px 64px -20px rgba(0,0,0,.55)}
 .plan.pro{border-color:rgba(201,165,81,.45);
   background:linear-gradient(160deg,#111d33 0%,#0c1728 100%);
@@ -211,7 +212,7 @@ h2{font-family:var(--serif);font-size:clamp(28px,3.6vw,46px);letter-spacing:-.01
 .price{font-family:var(--serif);font-size:52px;font-weight:500;margin:20px 0 4px;letter-spacing:-.03em;line-height:1}
 .price small{font-family:var(--sans);font-size:14px;color:var(--mist);font-weight:400;letter-spacing:0}
 .plan-divider{border:none;border-top:1px solid var(--hairline);margin:28px 0}
-.plan ul{list-style:none;margin:0 0 36px;display:flex;flex-direction:column;gap:14px;font-size:15.5px;color:var(--soft)}
+.plan ul{list-style:none;margin:0 0 36px;display:flex;flex-direction:column;gap:14px;font-size:15.5px;color:var(--soft);flex:1}
 .plan ul li{padding-left:26px;position:relative;line-height:1.45}
 .plan ul li::before{content:"✓";position:absolute;left:0;color:var(--green);font-size:13px;top:1px}
 .plan ul li.off{color:var(--mist)}
