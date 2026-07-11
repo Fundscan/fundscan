@@ -21,10 +21,10 @@ CONFIG REQUIRED (set in .env):
 import logging
 import os
 import secrets
-import smtplib
 from datetime import datetime, timedelta, timezone
-from email.message import EmailMessage
 from typing import Optional
+
+import httpx
 
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
@@ -102,22 +102,33 @@ def consume_magic_token(token: str) -> Optional[str]:
         return row["email"]
 
 
+def _send_via_resend(to: str, subject: str, text: str) -> None:
+    """Send email via Resend HTTP API."""
+    api_key = os.getenv("SMTP_PASS", "")
+    from_email = os.getenv("FROM_EMAIL", "noreply@fundscan.uk")
+    if not api_key:
+        log.warning("DEV — no SMTP_PASS set, skipping email to %s", to)
+        return
+    resp = httpx.post(
+        "https://api.resend.com/emails",
+        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        json={"from": from_email, "to": [to], "subject": subject, "text": text},
+        timeout=15,
+    )
+    resp.raise_for_status()
+
+
 def send_magic_link(email: str, token: str) -> None:
     link = f"{BASE_URL}/auth/verify?token={token}"
-    msg = EmailMessage()
-    msg["Subject"] = "Your FundScan login link"
-    msg["From"] = os.getenv("FROM_EMAIL", "noreply@fundscan.io")
-    msg["To"] = email
-    msg.set_content(
-        f"Click to log in to FundScan (expires in {TOKEN_TTL_MINUTES} minutes):\n\n{link}\n\n"
-        "If you didn't request this, ignore this email."
-    )
     try:
-        with smtplib.SMTP(os.getenv("SMTP_HOST", "localhost"),
-                          int(os.getenv("SMTP_PORT", "587"))) as s:
-            s.starttls()
-            s.login(os.getenv("SMTP_USER", ""), os.getenv("SMTP_PASS", ""))
-            s.send_message(msg)
+        _send_via_resend(
+            to=email,
+            subject="Your FundScan login link",
+            text=(
+                f"Click to log in to FundScan (expires in {TOKEN_TTL_MINUTES} minutes):\n\n"
+                f"{link}\n\nIf you didn't request this, ignore this email."
+            ),
+        )
         log.info("Magic link sent to %s", email)
     except Exception as e:
         log.error("Failed to send magic link to %s: %s", email, e)
@@ -125,21 +136,9 @@ def send_magic_link(email: str, token: str) -> None:
 
 
 def send_email(to: str, subject: str, body: str) -> None:
-    """Send a plain-text email via SMTP. Used for onboarding/feedback sequences."""
-    msg = EmailMessage()
-    msg["Subject"] = subject
-    msg["From"] = os.getenv("FROM_EMAIL", "noreply@fundscan.uk")
-    msg["To"] = to
-    msg.set_content(body)
-    smtp_host = os.getenv("SMTP_HOST", "")
-    if not smtp_host:
-        log.warning("DEV — email to %s: %s", to, subject)
-        return
+    """Send a plain-text email via Resend API. Used for onboarding/feedback sequences."""
     try:
-        with smtplib.SMTP(smtp_host, int(os.getenv("SMTP_PORT", "587"))) as s:
-            s.starttls()
-            s.login(os.getenv("SMTP_USER", ""), os.getenv("SMTP_PASS", ""))
-            s.send_message(msg)
+        _send_via_resend(to=to, subject=subject, text=body)
         log.info("Email sent to %s: %s", to, subject)
     except Exception as e:
         log.error("Failed to send email to %s: %s", to, e)
