@@ -376,7 +376,7 @@ def _current_user(request: Request) -> Optional[dict]:
     return get_user_by_id(uid)
 
 
-FREE_TIER_LIMIT = 5
+FREE_TIER_LIMIT = 25
 
 
 def _tier_results(user: Optional[dict]) -> tuple[list[dict], list[dict]]:
