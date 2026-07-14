@@ -3,7 +3,7 @@ FundScan FastAPI application.
 Run: uvicorn fundscan.app:app --reload
 """
 from dotenv import load_dotenv
-load_dotenv(dotenv_path="/Users/bilguunboursier/Documents/Claude/Projects/fundscan/.env")
+load_dotenv()
 import logging
 import os
 import time
@@ -13,18 +13,21 @@ from pathlib import Path
 from typing import Optional
 
 import asyncio
+import csv
+import io
+
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 
 from . import math as fm
-from .db import init_db, insert_snapshots, query_delayed, query_history, query_latest
+from .db import init_db, insert_snapshots, query_delayed, query_history, query_latest, query_sparklines, get_watchlist, toggle_watchlist
 from .scanner import scan
 from .alerts import (check_and_send_alerts, check_anomalies, send_daily_digest,
                      check_multi_exchange, check_watchlist_drops,
                      generate_connect_code, link_telegram)
 from .onboarding import run_onboarding, run_weekly_report
-from .maintenance import run_db_backup, run_seo_check
+from .maintenance import run_db_backup, run_db_prune, run_seo_check
 from .competitor import run_competitor_monitor, run_reddit_scout
 from .auth import (
     SESSION_COOKIE,
@@ -69,6 +72,7 @@ async def _fetch_loop():
                 await asyncio.to_thread(run_onboarding)
                 await asyncio.to_thread(run_weekly_report, rows)
                 await asyncio.to_thread(run_db_backup)
+                await asyncio.to_thread(run_db_prune)
                 await asyncio.to_thread(run_seo_check)
                 await asyncio.to_thread(run_competitor_monitor)
                 await asyncio.to_thread(run_reddit_scout)
@@ -161,6 +165,116 @@ def history(symbol: str, days: int = 7):
             for r in rows
         ],
     }
+
+
+@app.get("/api/v1/rates")
+def api_v1_rates(request: Request):
+    """
+    Machine-readable rates endpoint. Pro users get live full list.
+    Free/anonymous get top 5, delayed 10 minutes (same as the dashboard).
+    net_apy and gross_apy are decimals (0.15 = 15%).
+    """
+    user = _current_user(request)
+    results, missing = _tier_results(user)
+    tier = user["tier"] if user else "anonymous"
+    return {
+        "tier": tier,
+        "fetched_at": _state["last_fetch_at"],
+        "count": len(results),
+        "missing_on_free_tier": missing,
+        "fee_model": {
+            "fee_per_leg_pct": fm.FEE_PER_LEG * 100,
+            "legs": fm.LEGS,
+            "slippage_pct": fm.SLIPPAGE * 100,
+            "total_round_trip_pct": fm.TOTAL_ROUND_TRIP_COST * 100,
+        },
+        "opportunities": [
+            {
+                "exchange": r["exchange"],
+                "symbol": r["symbol"],
+                "rate_8h": r["rate_8h"],
+                "gross_apy": r["gross_apy"],
+                "net_apy": r["net_apy"],
+                "breakeven_cycles": r["breakeven_cycles"],
+                "is_profitable": r["is_profitable"],
+                "fetched_at": r.get("fetched_at"),
+            }
+            for r in results
+        ],
+    }
+
+
+@app.get("/export/rates.csv")
+def export_rates_csv(request: Request):
+    """
+    Download current rates as CSV. Pro: full live list. Free: top 5, delayed.
+    """
+    user = _current_user(request)
+    results, _ = _tier_results(user)
+
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow([
+        "exchange", "symbol", "rate_8h_pct", "gross_apy_pct",
+        "net_apy_pct", "breakeven_cycles", "is_profitable", "fetched_at",
+    ])
+    for r in results:
+        writer.writerow([
+            r["exchange"],
+            r["symbol"],
+            f"{r['rate_8h'] * 100:.6f}",
+            f"{r['gross_apy'] * 100:.4f}",
+            f"{r['net_apy'] * 100:.4f}",
+            r["breakeven_cycles"] if r["breakeven_cycles"] is not None else "",
+            r["is_profitable"],
+            r.get("fetched_at", ""),
+        ])
+    buf.seek(0)
+
+    return StreamingResponse(
+        iter([buf.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=fundscan_rates.csv"},
+    )
+
+
+@app.get("/api/sparklines")
+def api_sparklines():
+    """
+    Batch 24h sparkline data for all tracked pairs.
+    Returns {"{exchange}:{symbol}": [net_apy, ...]} (24 points max, oldest-first).
+    Used by the dashboard to draw inline trend sparklines without N+1 fetches.
+    """
+    return query_sparklines(hours=24)
+
+
+# ---------------------------------------------------------------------------
+# Watchlist
+# ---------------------------------------------------------------------------
+
+@app.get("/api/watchlist")
+def api_watchlist(request: Request):
+    """Return current user's watchlist as [{symbol, exchange}]."""
+    user = _current_user(request)
+    if not user:
+        return []
+    rows = get_watchlist(user["id"])
+    return [{"symbol": r["symbol"], "exchange": r["exchange"]} for r in rows]
+
+
+@app.post("/watchlist/toggle")
+async def watchlist_toggle(request: Request):
+    """Toggle a pair on/off the watchlist. Body: {symbol, exchange}."""
+    user = _current_user(request)
+    if not user:
+        raise HTTPException(401, "Login required")
+    body = await request.json()
+    symbol = body.get("symbol", "").upper()
+    exchange = body.get("exchange", "").lower()
+    if not symbol or not exchange:
+        raise HTTPException(400, "symbol and exchange required")
+    added = toggle_watchlist(user["id"], symbol, exchange)
+    return {"symbol": symbol, "exchange": exchange, "watchlisted": added}
 
 
 # ---------------------------------------------------------------------------
@@ -313,7 +427,7 @@ def _pct(v: float) -> str:
 
 def _render_table_rows(results: list[dict]) -> str:
     if not results:
-        return '<tr><td colspan="5" style="text-align:center;color:var(--muted)">Fetching data…</td></tr>'
+        return '<tr><td colspan="7" style="text-align:center;color:var(--muted)">Fetching data…</td></tr>'
 
     rows = []
     for r in results:
@@ -323,16 +437,25 @@ def _render_table_rows(results: list[dict]) -> str:
         net_color = "#22c55e" if profitable else "var(--muted)"
         be = r["breakeven_cycles"]
         be_str = f"{be:.1f}" if be is not None else "∞"
+        spark_key = f"{r['exchange']}:{r['symbol']}"
+        spark_id = f"spark-{r['exchange']}-{r['symbol']}".replace("/", "_")
+        star_id = f"star-{r['exchange']}-{r['symbol']}".replace("/", "_")
         rows.append(
             f'<tr{row_class} data-symbol="{r["symbol"]}" data-exchange="{r["exchange"]}" onclick="toggleChart(this)">'
+            f'<td onclick="event.stopPropagation()">'
+            f'<button class="star-btn" id="{star_id}" '
+            f'data-symbol="{r["symbol"]}" data-exchange="{r["exchange"]}" '
+            f'onclick="toggleWatchlist(this)" title="Add to watchlist">☆</button>'
+            f'</td>'
             f'<td>{r["symbol"]}</td>'
             f'<td>{r["exchange"].title()}</td>'
             f'<td>{_pct(r["rate_8h"])}</td>'
             f'<td style="color:{net_color};font-weight:600">{net_label}</td>'
             f'<td>{be_str}</td>'
+            f'<td class="spark-cell"><canvas id="{spark_id}" data-spark-key="{spark_key}" width="80" height="28"></canvas></td>'
             f'</tr>'
             f'<tr class="chart-row" id="chart-{r["symbol"]}-{r["exchange"]}" style="display:none">'
-            f'<td colspan="5"><canvas id="canvas-{r["symbol"]}-{r["exchange"]}" height="80"></canvas></td>'
+            f'<td colspan="7"><canvas id="canvas-{r["symbol"]}-{r["exchange"]}" height="80"></canvas></td>'
             f'</tr>'
         )
     return "\n".join(rows)
@@ -443,15 +566,15 @@ async def auth_request_submit(request: Request):
     get_or_create_user(email)
     token = create_magic_token(email)
 
-    smtp_host = os.getenv("SMTP_HOST", "")
-    if smtp_host:
+    resend_key = os.getenv("RESEND_API_KEY", "")
+    if resend_key:
         try:
             send_magic_link(email, token)
         except Exception as e:
             log.error("Failed to send magic link to %s: %s", email, e)
             # Don't leak whether send failed — show same page
     else:
-        # Dev mode: log the link so you can click it without SMTP
+        # Dev mode: log the link so you can click it without Resend configured
         base = os.getenv("BASE_URL", "http://localhost:8000")
         log.warning("DEV — magic link for %s: %s/auth/verify?token=%s", email, base, token)
 
@@ -508,35 +631,17 @@ def auth_logout():
 
 @app.get("/billing/checkout")
 def billing_checkout(request: Request):
-    """
-    Redirect to Stripe Checkout for the Pro subscription.
-    Requires STRIPE_SECRET_KEY and STRIPE_PRICE_ID in .env.
-    """
-    from .billing import checkout_url
-    user = _current_user(request)
-    if not user:
-        return RedirectResponse("/auth/request", status_code=302)
-
-    stripe_key = os.getenv("STRIPE_SECRET_KEY", "")
-    stripe_price = os.getenv("STRIPE_PRICE_ID", "")
-    if stripe_key and stripe_price:
-        try:
-            url = checkout_url(user["email"])
-            return RedirectResponse(url, status_code=302)
-        except Exception as e:
-            log.error("Stripe checkout failed: %s", e)
-
+    """Pro subscriptions temporarily closed — returns a holding page."""
     return HTMLResponse("""<!DOCTYPE html>
-<html lang="en"><head><meta charset="utf-8"><title>Upgrade to Pro — FundScan</title>
+<html lang="en"><head><meta charset="utf-8"><title>Coming Soon — FundScan</title>
 <style>body{background:#0A1424;color:#EEF1F6;font-family:system-ui,sans-serif;
   display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}
 .box{max-width:420px;padding:2.5rem;border:1px solid rgba(201,165,81,.4);border-radius:8px;background:#0F1B30}
-p{color:#A7B2C4;margin:.75rem 0;font-size:.95rem}code{color:#C9A551}
+p{color:#A7B2C4;margin:.75rem 0;font-size:.95rem}
 a{color:#C9A551;text-decoration:none}</style></head>
 <body><div class="box">
-<h1 style="font-size:1.2rem;margin-bottom:.5rem">Upgrade to Pro</h1>
-<p>Stripe billing will be live once credentials are configured.</p>
-<p>Set <code>STRIPE_SECRET_KEY</code> and <code>STRIPE_PRICE_ID</code> in your <code>.env</code> file.</p>
+<h1 style="font-size:1.2rem;margin-bottom:.5rem">Pro subscriptions opening soon</h1>
+<p>We're finishing a few things before opening up. Check back shortly.</p>
 <p style="margin-top:1.5rem"><a href="/">← Back to home</a></p>
 </div></body></html>""")
 
@@ -583,12 +688,23 @@ def account(request: Request):
         return RedirectResponse("/auth/request", status_code=302)
 
     tier = user["tier"]
+    base_url = os.getenv("BASE_URL", "http://localhost:8000")
     if tier == "pro":
         plan_html = '<span style="color:#22c55e;font-weight:600">Pro</span>'
-        action_html = '<a href="https://billing.stripe.com/p/login/test_placeholder" style="color:#C9A551">Manage subscription →</a>'
+        stripe_key = os.getenv("STRIPE_SECRET_KEY", "")
+        if stripe_key:
+            try:
+                from .billing import portal_url
+                manage_url = portal_url(user["email"], return_url=f"{base_url}/account")
+            except Exception as e:
+                log.warning("Stripe portal session failed for %s: %s", user["email"], e)
+                manage_url = "/account"
+        else:
+            manage_url = "/account"
+        action_html = f'<a href="{manage_url}" style="color:#C9A551">Manage subscription →</a>'
     else:
         plan_html = "Free"
-        action_html = '<a href="/billing/checkout" style="background:#C9A551;color:#221A08;padding:.6rem 1.2rem;border-radius:4px;text-decoration:none;font-weight:600">Upgrade to Pro — £20/mo</a>'
+        action_html = '<span style="color:#A7B2C4;font-size:.9rem">Pro subscriptions opening soon</span>'
 
     # Telegram section
     from .db import get_conn as _get_conn
@@ -622,10 +738,27 @@ def account(request: Request):
   </div>
 </div>"""
 
+    # Watchlist section
+    wl_rows = get_watchlist(user["id"])
+    if wl_rows:
+        wl_items = "".join(
+            f'<div class="row" style="font-size:.88rem">'
+            f'<span>{r["symbol"]} <span style="color:#67748A">· {r["exchange"].title()}</span></span>'
+            f'<form method="post" action="/watchlist/remove" style="margin:0">'
+            f'<input type="hidden" name="symbol" value="{r["symbol"]}">'
+            f'<input type="hidden" name="exchange" value="{r["exchange"]}">'
+            f'<button type="submit" style="background:none;border:none;color:#67748A;cursor:pointer;font-size:.8rem;padding:.2rem .4rem">✕</button>'
+            f'</form></div>'
+            for r in wl_rows
+        )
+        wl_html = f'<div style="margin-top:1.5rem"><p style="color:#A7B2C4;font-size:.85rem;margin-bottom:.5rem">Watchlist — starred pairs</p>{wl_items}</div>'
+    else:
+        wl_html = '<p style="color:#67748A;font-size:.85rem;margin-top:1.5rem">No pairs watchlisted yet. Star a pair on the scanner to add it.</p>'
+
     return HTMLResponse(f"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"><title>Account — FundScan</title>
 <style>body{{background:#0A1424;color:#EEF1F6;font-family:system-ui,sans-serif;
-  display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}}
+  display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;padding:2rem 1rem}}
 .box{{width:100%;max-width:480px;padding:2.5rem;border:1px solid rgba(167,178,196,.13);
   border-radius:8px;background:#0F1B30}}
 h1{{font-size:1.2rem;margin-bottom:1.5rem}}
@@ -644,6 +777,7 @@ a.signout:hover{{color:#EEF1F6}}
 <div class="row"><span class="label">Plan</span><span>{plan_html}</span></div>
 <div class="row" style="border:none;padding-top:1.25rem">{action_html}</div>
 {tg_html}
+{wl_html}
 <div class="links">
   <a href="/app" class="back">← Scanner</a>
   <a href="/auth/logout" class="signout">Sign out</a>
@@ -655,6 +789,25 @@ a.signout:hover{{color:#EEF1F6}}
 # ---------------------------------------------------------------------------
 # Account — alert threshold update
 # ---------------------------------------------------------------------------
+
+@app.post("/watchlist/remove")
+async def watchlist_remove(request: Request):
+    """Form-based watchlist removal (from account page)."""
+    user = _current_user(request)
+    if not user:
+        return RedirectResponse("/auth/request", status_code=302)
+    form = await request.form()
+    symbol = str(form.get("symbol", "")).upper()
+    exchange = str(form.get("exchange", "")).lower()
+    if symbol and exchange:
+        from .db import get_conn as _gc
+        with _gc() as conn:
+            conn.execute(
+                "DELETE FROM watchlist WHERE user_id = ? AND symbol = ? AND exchange = ?",
+                (user["id"], symbol, exchange),
+            )
+    return RedirectResponse("/account", status_code=302)
+
 
 @app.post("/account/alert-threshold")
 def update_alert_threshold(request: Request, min_net_apy: int = 50):

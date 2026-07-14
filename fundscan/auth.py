@@ -10,18 +10,17 @@ Sessions: signed cookies using itsdangerous (same library FastAPI uses internall
 No passwords. Free vs pro tier controlled by users.tier column.
 
 CONFIG REQUIRED (set in .env):
-  SECRET_KEY   — random 32-byte hex string, e.g. `openssl rand -hex 32`
-  SMTP_HOST    — e.g. smtp.postmarkapp.com
-  SMTP_PORT    — e.g. 587
-  SMTP_USER
-  SMTP_PASS
-  FROM_EMAIL
-  BASE_URL     — e.g. https://fundscan.io (used for magic link URL)
+  SECRET_KEY      — random 32-byte hex string, e.g. `openssl rand -hex 32`
+  RESEND_API_KEY  — from https://resend.com (re_...)
+  FROM_EMAIL      — verified sender address in Resend
+  BASE_URL        — e.g. https://fundscan.uk (used for magic link URL)
 """
 import logging
 import os
 import secrets
+import smtplib
 from datetime import datetime, timedelta, timezone
+from email.mime.text import MIMEText
 from typing import Optional
 
 import httpx
@@ -103,12 +102,9 @@ def consume_magic_token(token: str) -> Optional[str]:
 
 
 def _send_via_resend(to: str, subject: str, text: str) -> None:
-    """Send email via Resend HTTP API."""
-    api_key = os.getenv("SMTP_PASS", "")
-    from_email = os.getenv("FROM_EMAIL", "noreply@fundscan.uk")
-    if not api_key:
-        log.warning("DEV — no SMTP_PASS set, skipping email to %s", to)
-        return
+    """Send email via Resend HTTP API. Raises on failure."""
+    api_key = os.getenv("RESEND_API_KEY", "")
+    from_email = os.getenv("FROM_EMAIL", "noreuter@fundscan.uk")
     resp = httpx.post(
         "https://api.resend.com/emails",
         headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
@@ -118,10 +114,41 @@ def _send_via_resend(to: str, subject: str, text: str) -> None:
     resp.raise_for_status()
 
 
+def _send_via_smtp(to: str, subject: str, text: str) -> None:
+    """Send email via SMTP. Raises on failure."""
+    host = os.getenv("SMTP_HOST", "")
+    port = int(os.getenv("SMTP_PORT", "587"))
+    user = os.getenv("SMTP_USER", "")
+    password = os.getenv("SMTP_PASS", "")
+    from_email = os.getenv("FROM_EMAIL", user)
+    msg = MIMEText(text, "plain", "utf-8")
+    msg["Subject"] = subject
+    msg["From"] = from_email
+    msg["To"] = to
+    with smtplib.SMTP(host, port, timeout=15) as conn:
+        conn.ehlo()
+        conn.starttls()
+        conn.login(user, password)
+        conn.sendmail(from_email, [to], msg.as_string())
+
+
+def _dispatch_email(to: str, subject: str, text: str) -> None:
+    """
+    Try Resend first (if RESEND_API_KEY set), fall back to SMTP
+    (if SMTP_HOST set). Logs a warning and skips if neither is configured.
+    """
+    if os.getenv("RESEND_API_KEY"):
+        _send_via_resend(to, subject, text)
+    elif os.getenv("SMTP_HOST"):
+        _send_via_smtp(to, subject, text)
+    else:
+        log.warning("DEV — no email provider configured, skipping email to %s", to)
+
+
 def send_magic_link(email: str, token: str) -> None:
     link = f"{BASE_URL}/auth/verify?token={token}"
     try:
-        _send_via_resend(
+        _dispatch_email(
             to=email,
             subject="Your FundScan login link",
             text=(
@@ -136,9 +163,9 @@ def send_magic_link(email: str, token: str) -> None:
 
 
 def send_email(to: str, subject: str, body: str) -> None:
-    """Send a plain-text email via Resend API. Used for onboarding/feedback sequences."""
+    """Send a plain-text email. Used for alerts, onboarding, billing notices."""
     try:
-        _send_via_resend(to=to, subject=subject, text=body)
+        _dispatch_email(to=to, subject=subject, text=body)
         log.info("Email sent to %s: %s", to, subject)
     except Exception as e:
         log.error("Failed to send email to %s: %s", to, e)

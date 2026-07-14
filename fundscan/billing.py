@@ -29,6 +29,25 @@ STRIPE_PRICE_ID = os.getenv("STRIPE_PRICE_ID", "")
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")
 
 
+def portal_url(email: str, return_url: str) -> str:
+    """
+    Create a Stripe Billing Portal session for an existing customer.
+    Returns the portal URL so the user can manage/cancel their subscription.
+    The customer is looked up by email — requires STRIPE_SECRET_KEY.
+    """
+    stripe.api_key = STRIPE_SECRET_KEY
+    # Find the customer by email
+    customers = stripe.Customer.list(email=email, limit=1)
+    if not customers.data:
+        raise ValueError(f"No Stripe customer found for {email}")
+    customer_id = customers.data[0].id
+    session = stripe.billing_portal.Session.create(
+        customer=customer_id,
+        return_url=return_url,
+    )
+    return session.url
+
+
 def checkout_url(email: str) -> str:
     """
     Create a Stripe Checkout Session for a £20/month subscription.
@@ -98,4 +117,16 @@ def handle_webhook(event: stripe.Event) -> None:
         obj = event["data"]["object"]
         email = obj.get("customer_email")
         log.warning("Payment failed for %s (invoice %s)", email, obj.get("id"))
-        # TODO: send email notification to user
+        if email:
+            from .auth import send_email
+            send_email(
+                email,
+                "FundScan — payment failed",
+                (
+                    "Hi,\n\nWe couldn't process your FundScan subscription payment.\n\n"
+                    "Please update your payment method to keep Pro access:\n"
+                    f"{os.getenv('BASE_URL', 'https://fundscan.uk')}/account\n\n"
+                    "Your account will stay active until the next retry.\n\n"
+                    "— FundScan"
+                ),
+            )

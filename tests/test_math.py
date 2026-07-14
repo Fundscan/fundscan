@@ -139,6 +139,7 @@ def test_not_profitable_negative():
 def test_fetcher_isolation():
     """Scanner must return results even when one fetcher raises."""
     from unittest.mock import patch
+    from fundscan.scanner import scan
 
     def bad_fetcher():
         raise RuntimeError("exchange down")
@@ -153,7 +154,6 @@ def test_fetcher_isolation():
         }]
 
     with patch("fundscan.scanner.FETCHERS", [bad_fetcher, good_fetcher]):
-        from fundscan.scanner import scan
         results = scan()
 
     assert len(results) == 1

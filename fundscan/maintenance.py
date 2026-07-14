@@ -17,6 +17,8 @@ log = logging.getLogger(__name__)
 
 _last_backup_date: str = ""
 _last_seo_week: str = ""
+_last_prune_date: str = ""
+SNAPSHOT_RETENTION_DAYS = int(os.getenv("SNAPSHOT_RETENTION_DAYS", "30"))
 
 BACKUP_DIR = Path(os.getenv("DB_PATH", "fundscan.db")).parent / "backups"
 OWNER_EMAIL = "bilguun@fundscan.uk"
@@ -46,6 +48,28 @@ def run_db_backup() -> None:
 
     _last_backup_date = today
     log.info("DB backed up to %s", backup_path)
+
+
+def run_db_prune() -> None:
+    """Delete funding_snapshots older than SNAPSHOT_RETENTION_DAYS. Runs once per day."""
+    global _last_prune_date
+
+    now = datetime.now(timezone.utc)
+    today = now.strftime("%Y-%m-%d")
+    if _last_prune_date == today:
+        return
+
+    from .db import get_conn
+    cutoff = f"-{SNAPSHOT_RETENTION_DAYS} days"
+    with get_conn() as conn:
+        result = conn.execute(
+            "DELETE FROM funding_snapshots WHERE ts < datetime('now', ?)",
+            (cutoff,),
+        )
+        deleted = result.rowcount
+
+    _last_prune_date = today
+    log.info("DB prune: deleted %d snapshots older than %d days", deleted, SNAPSHOT_RETENTION_DAYS)
 
 
 def run_seo_check() -> None:

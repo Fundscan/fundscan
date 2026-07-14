@@ -183,3 +183,67 @@ def query_history(symbol: str, days: int = 7) -> list[sqlite3.Row]:
             """,
             (symbol, f"-{days} days"),
         ).fetchall()
+
+
+# ---------------------------------------------------------------------------
+# Watchlist helpers
+# ---------------------------------------------------------------------------
+
+def get_watchlist(user_id: int) -> list[sqlite3.Row]:
+    """Return all watchlist entries for a user."""
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT symbol, exchange, added_at FROM watchlist WHERE user_id = ? ORDER BY added_at DESC",
+            (user_id,),
+        ).fetchall()
+
+
+def toggle_watchlist(user_id: int, symbol: str, exchange: str) -> bool:
+    """Add to watchlist if not present, remove if present. Returns True if now added."""
+    now = __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat()
+    with get_conn() as conn:
+        existing = conn.execute(
+            "SELECT id FROM watchlist WHERE user_id = ? AND symbol = ? AND exchange = ?",
+            (user_id, symbol, exchange),
+        ).fetchone()
+        if existing:
+            conn.execute(
+                "DELETE FROM watchlist WHERE user_id = ? AND symbol = ? AND exchange = ?",
+                (user_id, symbol, exchange),
+            )
+            return False
+        else:
+            conn.execute(
+                "INSERT INTO watchlist (user_id, symbol, exchange, added_at) VALUES (?, ?, ?, ?)",
+                (user_id, symbol, exchange, now),
+            )
+            return True
+
+
+def query_sparklines(hours: int = 24) -> dict[str, list[float]]:
+    """
+    Return the last `hours` of net_apy per (exchange, symbol), downsampled
+    to ≤24 points. Used to render inline sparklines without N+1 queries.
+    Returns {"{exchange}:{symbol}": [net_apy, ...]} sorted oldest-first.
+    """
+    with get_conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT exchange, symbol, net_apy
+            FROM funding_snapshots
+            WHERE ts >= datetime('now', ?)
+            ORDER BY exchange, symbol, ts ASC
+            """,
+            (f"-{hours} hours",),
+        ).fetchall()
+
+    result: dict[str, list[float]] = {}
+    for row in rows:
+        key = f"{row['exchange']}:{row['symbol']}"
+        result.setdefault(key, []).append(row["net_apy"])
+
+    MAX_PTS = 24
+    return {
+        k: v[:: max(1, len(v) // MAX_PTS)][-MAX_PTS:]
+        for k, v in result.items()
+    }

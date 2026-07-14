@@ -23,6 +23,7 @@ from datetime import datetime, timedelta, timezone
 import httpx
 
 from .db import get_conn
+from .auth import send_email
 
 log = logging.getLogger(__name__)
 
@@ -121,16 +122,55 @@ def _get_connected_users() -> list:
         ).fetchall()
 
 
+def _get_all_users_with_alerts() -> list:
+    """All users who have an alert config (Telegram OR email-only via min_net_apy row)."""
+    with get_conn() as conn:
+        return conn.execute(
+            """
+            SELECT ac.*, u.tier, u.email
+            FROM alert_configs ac
+            JOIN users u ON u.id = ac.user_id
+            WHERE ac.telegram_chat_id NOT LIKE 'PENDING:%'
+            """
+        ).fetchall()
+
+
+def _send_alert(cfg, row: dict) -> None:
+    """Send a threshold alert via Telegram (if connected) and/or email.
+    cfg may be a sqlite3.Row or dict — access via [] only."""
+    msg_tg = (
+        f"\U0001f6a8 *FundScan Alert*\n"
+        f"*{row['symbol']}* on {row['exchange'].title()}\n"
+        f"Net APY: *{row['net_apy']*100:.2f}%*\n"
+        f"Rate/8h: {row['rate_8h']*100:.4f}%\n"
+        f"Breakeven: {row['breakeven_cycles']} cycles"
+    )
+    msg_email = (
+        f"FundScan Alert — {row['symbol']} on {row['exchange'].title()}\n\n"
+        f"Net APY: {row['net_apy']*100:.2f}%\n"
+        f"Rate/8h: {row['rate_8h']*100:.4f}%\n"
+        f"Breakeven: {row['breakeven_cycles']} cycles\n\n"
+        f"View the full scanner: https://fundscan.uk/app"
+    )
+    chat_id = cfg["telegram_chat_id"]
+    if chat_id and TELEGRAM_TOKEN:
+        _send_telegram(chat_id, msg_tg)
+    email = cfg["email"]
+    if email:
+        send_email(
+            email,
+            f"FundScan: {row['symbol']} at {row['net_apy']*100:.1f}% net APY",
+            msg_email,
+        )
+
+
 def check_and_send_alerts(scan_results: list[dict]) -> None:
     """
     Agent 1 — Threshold Alert.
     Called after each fetch cycle. Fires when net_apy crosses user threshold.
-    Rate limited to 1 alert per pair per hour.
+    Sends via Telegram (if connected) and email. Rate limited: 1 alert/pair/hour.
     """
-    if not TELEGRAM_TOKEN:
-        return
-
-    configs = _get_connected_users()
+    configs = _get_all_users_with_alerts()
     for cfg in configs:
         for row in scan_results:
             if cfg["symbol"] and cfg["symbol"] != row["symbol"]:
@@ -140,14 +180,7 @@ def check_and_send_alerts(scan_results: list[dict]) -> None:
             if _already_alerted(cfg["user_id"], row["symbol"]):
                 continue
 
-            msg = (
-                f"🚨 *FundScan Alert*\n"
-                f"*{row['symbol']}* on {row['exchange'].title()}\n"
-                f"Net APY: *{row['net_apy']*100:.2f}%*\n"
-                f"Rate/8h: {row['rate_8h']*100:.4f}%\n"
-                f"Breakeven: {row['breakeven_cycles']} cycles"
-            )
-            _send_telegram(cfg["telegram_chat_id"], msg)
+            _send_alert(cfg, row)
             _record_alert(cfg["user_id"], row["symbol"])
             log.info("Threshold alert: user=%s symbol=%s net_apy=%.2f%%",
                      cfg["user_id"], row["symbol"], row["net_apy"] * 100)

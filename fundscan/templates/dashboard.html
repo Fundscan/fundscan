@@ -53,8 +53,14 @@
   tbody tr:not(.chart-row):hover { background: var(--surface); cursor: pointer; }
   .chart-row td { padding: .5rem .75rem 1rem; background: var(--surface); }
   .note { font-size: 11px; color: var(--muted); margin-top: 1rem; }
+  .spark-cell { width: 80px; padding: .3rem .75rem; }
+  .spark-cell canvas { display: block; }
+  .star-btn { background: none; border: none; cursor: pointer; font-size: 14px;
+              color: var(--muted); padding: .2rem .4rem; line-height:1; }
+  .star-btn.active { color: var(--gold); }
+  .star-btn:hover { color: var(--gold); }
   @media (max-width: 600px) {
-    td:nth-child(3), th:nth-child(3) { display: none; }
+    td:nth-child(3), th:nth-child(3), td:nth-child(6), th:nth-child(6) { display: none; }
     header { flex-direction: column; align-items: flex-start; }
   }
 </style>
@@ -69,6 +75,7 @@
     </div>
     {% if user %}
     <span class="user-pill"><b>{{ user.email }}</b> · {{ user.tier }}</span>
+    <a href="/export/rates.csv" class="logout" title="Download as CSV">↓ CSV</a>
     <a href="/auth/logout" class="logout">sign out</a>
     {% endif %}
   </div>
@@ -92,8 +99,8 @@
   <table>
     <thead>
       <tr>
-        <th>Symbol</th><th>Exchange</th><th>Rate/8h</th>
-        <th>Net APY ▾</th><th>Breakeven cycles</th>
+        <th></th><th>Symbol</th><th>Exchange</th><th>Rate/8h</th>
+        <th>Net APY ▾</th><th>Breakeven cycles</th><th>24h trend</th>
       </tr>
     </thead>
     <tbody id="rates-body"
@@ -109,6 +116,94 @@
 
 <script>
 const activeCharts = {};
+let _sparklineData = {};
+
+// Load sparkline data once after HTMX populates the table
+async function loadSparklines() {
+  try {
+    const res = await fetch('/api/sparklines');
+    _sparklineData = await res.json();
+    document.querySelectorAll('[data-spark-key]').forEach(canvas => {
+      const key = canvas.dataset.sparkKey;
+      const values = _sparklineData[key];
+      if (!values || values.length < 2) return;
+      drawSparkline(canvas, values);
+    });
+  } catch(e) { /* sparklines are decorative — fail silently */ }
+}
+
+function drawSparkline(canvas, values) {
+  const profitable = values[values.length - 1] > 0;
+  const color = profitable ? '#22c55e' : '#64748b';
+  if (activeCharts[canvas.id]) activeCharts[canvas.id].destroy();
+  activeCharts[canvas.id] = new Chart(canvas, {
+    type: 'line',
+    data: {
+      labels: values.map((_, i) => i),
+      datasets: [{
+        data: values.map(v => +(v * 100).toFixed(3)),
+        borderColor: color,
+        borderWidth: 1.5,
+        pointRadius: 0,
+        tension: .3,
+        fill: false,
+      }]
+    },
+    options: {
+      animation: false,
+      plugins: { legend: { display: false }, tooltip: { enabled: false } },
+      scales: {
+        x: { display: false },
+        y: { display: false },
+      },
+    }
+  });
+}
+
+// Trigger sparkline + watchlist load whenever HTMX refreshes the rows
+document.body.addEventListener('htmx:afterSwap', e => {
+  if (e.detail.target.id === 'rates-body') {
+    loadSparklines();
+    applyWatchlistStars();
+  }
+});
+document.addEventListener('DOMContentLoaded', () => {
+  setTimeout(() => { loadSparklines(); applyWatchlistStars(); }, 500);
+});
+
+// Watchlist
+let _watchlist = new Set(); // "exchange:symbol"
+
+async function applyWatchlistStars() {
+  try {
+    const res = await fetch('/api/watchlist');
+    const data = await res.json();
+    _watchlist = new Set(data.map(w => `${w.exchange}:${w.symbol}`));
+    document.querySelectorAll('.star-btn').forEach(btn => {
+      const key = `${btn.dataset.exchange}:${btn.dataset.symbol}`;
+      btn.classList.toggle('active', _watchlist.has(key));
+      btn.textContent = _watchlist.has(key) ? '★' : '☆';
+    });
+  } catch(e) {}
+}
+
+async function toggleWatchlist(btn) {
+  const symbol = btn.dataset.symbol;
+  const exchange = btn.dataset.exchange;
+  try {
+    const res = await fetch('/watchlist/toggle', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({symbol, exchange}),
+    });
+    const data = await res.json();
+    const added = data.watchlisted;
+    btn.classList.toggle('active', added);
+    btn.textContent = added ? '★' : '☆';
+    if (added) _watchlist.add(`${exchange}:${symbol}`);
+    else _watchlist.delete(`${exchange}:${symbol}`);
+  } catch(e) {}
+}
 
 async function toggleChart(row) {
   const sym = row.dataset.symbol;

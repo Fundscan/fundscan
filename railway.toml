@@ -4,3 +4,10 @@ builder = "NIXPACKS"
 [deploy]
 startCommand = "uvicorn fundscan.app:app --host 0.0.0.0 --port $PORT"
 region = "europe-west4"
+
+# Persistent volume so SQLite survives redeploys.
+# Create the volume in Railway dashboard → your service → Volumes → /data
+# Then set DB_PATH=/data/fundscan.db in Railway environment variables.
+[[volumes]]
+mountPath = "/data"
+name = "fundscan-db"
