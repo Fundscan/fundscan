@@ -196,7 +196,7 @@ tr.chart-row td{padding:.5rem 1rem 1.25rem;background:rgba(15,27,48,.4);border-b
 
 {% if user and user.tier == 'free' %}
 <div class="tier-banner">
-  <p><b>Free tier</b> — top 5 pairs · data delayed 10 min · <b>{{ missing_count }}</b> pair{{ 's' if missing_count != 1 else '' }} hidden</p>
+  <p><b>Free tier</b> — top 5 pairs only · <b>{{ missing_count }}</b> more pair{{ 's' if missing_count != 1 else '' }} hidden on Pro</p>
 </div>
 {% endif %}
 
@@ -236,7 +236,7 @@ tr.chart-row td{padding:.5rem 1rem 1.25rem;background:rgba(15,27,48,.4);border-b
   <p class="note">
     Net APY = gross annual yield − 1.09% round-trip fees (0.26% × 4 legs + 0.05% slippage).
     Click any row for 7-day rate history. Rates refresh every 60 s.
-    {% if user and user.tier == 'free' %}Data delayed 10 minutes on the free tier.{% endif %}
+    {% if user and user.tier == 'free' %}Free tier shows the top 5 pairs. Upgrade for the full list.{% endif %}
   </p>
 </div>
 

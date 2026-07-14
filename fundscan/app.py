@@ -377,44 +377,26 @@ def _current_user(request: Request) -> Optional[dict]:
 
 
 FREE_TIER_LIMIT = 5
-FREE_TIER_DELAY = 10  # minutes
 
 
 def _tier_results(user: Optional[dict]) -> tuple[list[dict], int]:
     """
-    Return (results, total_count) gated by tier.
+    Return (results, missing_count) gated by tier.
 
     Pro  → live in-memory results, full list.
-    Free → top FREE_TIER_LIMIT pairs from DB, delayed FREE_TIER_DELAY minutes.
-    Returns total_count so the UI can show "N pairs hidden".
+    Free → top FREE_TIER_LIMIT pairs from the same live results (no delay).
+    The differentiator is pair count, not data freshness.
     """
+    results = _state["results"]
     if user and user.get("tier") == "pro":
-        results = _state["results"]
         return results, 0
 
-    # Free / unauthenticated: delayed DB data, capped at 5
-    rows = query_delayed(FREE_TIER_DELAY)
-    if not rows:
-        # DB not populated yet — serve empty rather than crash
+    # Free / unauthenticated: live data, capped at 5 pairs
+    if not results:
         return [], 0
-    full_count = len(set((r["symbol"], r["exchange"]) for r in rows))
-    results = [
-        {
-            "exchange": r["exchange"],
-            "symbol": r["symbol"],
-            "rate_8h": r["rate_8h"],
-            "net_apy": r["net_apy"],
-            "gross_apy": fm.annualised_gross(r["rate_8h"]),
-            "breakeven_cycles": round(be, 1) if (be := fm.breakeven_cycles(r["rate_8h"])) else None,
-            "is_profitable": fm.is_profitable(r["rate_8h"]),
-            "fetched_at": r["ts"],
-            "funding_interval_hours": 8,
-            "next_funding_time": None,
-        }
-        for r in rows
-    ][:FREE_TIER_LIMIT]
+    full_count = len(results)
     missing = max(0, full_count - FREE_TIER_LIMIT)
-    return results, missing
+    return results[:FREE_TIER_LIMIT], missing
 
 
 # ---------------------------------------------------------------------------
