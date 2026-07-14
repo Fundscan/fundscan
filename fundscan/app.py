@@ -121,13 +121,13 @@ def rates(request: Request):
     net_apy and gross_apy are decimals (0.15 = 15%).
     """
     user = _current_user(request)
-    results, missing = _tier_results(user)
+    results, locked = _tier_results(user)
     tier = user["tier"] if user else "anonymous"
     return {
         "tier": tier,
         "fetched_at": _state["last_fetch_at"],
         "count": len(results),
-        "missing": missing,
+        "missing": len(locked),
         "opportunities": results,
     }
 
@@ -135,7 +135,7 @@ def rates(request: Request):
 @app.get("/rates/{symbol}")
 def rate_detail(request: Request, symbol: str):
     user = _current_user(request)
-    results, _ = _tier_results(user)
+    results, _locked = _tier_results(user)
     symbol = symbol.upper()
     matches = [r for r in results if r["symbol"] == symbol]
     if not matches:
@@ -175,13 +175,13 @@ def api_v1_rates(request: Request):
     net_apy and gross_apy are decimals (0.15 = 15%).
     """
     user = _current_user(request)
-    results, missing = _tier_results(user)
+    results, locked = _tier_results(user)
     tier = user["tier"] if user else "anonymous"
     return {
         "tier": tier,
         "fetched_at": _state["last_fetch_at"],
         "count": len(results),
-        "missing_on_free_tier": missing,
+        "missing_on_free_tier": len(locked),
         "fee_model": {
             "fee_per_leg_pct": fm.FEE_PER_LEG * 100,
             "legs": fm.LEGS,
@@ -210,7 +210,7 @@ def export_rates_csv(request: Request):
     Download current rates as CSV. Pro: full live list. Free: top 5, delayed.
     """
     user = _current_user(request)
-    results, _ = _tier_results(user)
+    results, _locked = _tier_results(user)
 
     buf = io.StringIO()
     writer = csv.writer(buf)
@@ -379,24 +379,20 @@ def _current_user(request: Request) -> Optional[dict]:
 FREE_TIER_LIMIT = 5
 
 
-def _tier_results(user: Optional[dict]) -> tuple[list[dict], int]:
+def _tier_results(user: Optional[dict]) -> tuple[list[dict], list[dict]]:
     """
-    Return (results, missing_count) gated by tier.
+    Return (visible_results, locked_results).
 
-    Pro  → live in-memory results, full list.
-    Free → top FREE_TIER_LIMIT pairs from the same live results (no delay).
-    The differentiator is pair count, not data freshness.
+    Pro  → (full list, [])
+    Free → (top 5, remaining rows as blurred placeholders)
     """
     results = _state["results"]
     if user and user.get("tier") == "pro":
-        return results, 0
+        return results, []
 
-    # Free / unauthenticated: live data, capped at 5 pairs
     if not results:
-        return [], 0
-    full_count = len(results)
-    missing = max(0, full_count - FREE_TIER_LIMIT)
-    return results[:FREE_TIER_LIMIT], missing
+        return [], []
+    return results[:FREE_TIER_LIMIT], results[FREE_TIER_LIMIT:]
 
 
 # ---------------------------------------------------------------------------
@@ -407,10 +403,10 @@ def _pct(v: float) -> str:
     return f"{v * 100:.2f}%"
 
 
-def _render_table_rows(results: list[dict]) -> str:
-    if not results:
+def _render_table_rows(results: list[dict], locked: list[dict] | None = None) -> str:
+    if not results and not locked:
         return (
-            '<tr class="data-row"><td colspan="7" '
+            '<tr class="data-row"><td colspan="8" '
             'style="text-align:center;color:var(--mist);font-family:var(--mono);'
             'font-size:12px;letter-spacing:.06em;padding:2rem 1rem">'
             'Fetching data…</td></tr>'
@@ -421,45 +417,81 @@ def _render_table_rows(results: list[dict]) -> str:
         profitable = r["is_profitable"]
         row_cls = "data-row" if profitable else "data-row greyed"
         net_cls = "num pos" if profitable else "num neg"
-        net_label = _pct(r["net_apy"]) if profitable else f"{_pct(r['net_apy'])}"
+        net_label = _pct(r["net_apy"])
         be = r["breakeven_cycles"]
         be_str = f"{be:.1f}" if be is not None else "∞"
         spark_key = f"{r['exchange']}:{r['symbol']}"
         safe_id = f"{r['exchange']}-{r['symbol']}".replace("/", "_")
-        exch = r["exchange"].title()
+        exch = r["exchange"].upper()
         rows.append(
-            f'<tr class="{row_cls}" data-symbol="{r["symbol"]}" data-exchange="{r["exchange"]}" onclick="toggleChart(this)">'
+            f'<tr class="{row_cls}" data-symbol="{r["symbol"]}" data-exchange="{r["exchange"]}"'
+            f' data-apy="{r["net_apy"]}" onclick="toggleChart(this)">'
             f'<td style="padding:.7rem .5rem .7rem .75rem" onclick="event.stopPropagation()">'
             f'<button class="star-btn" id="star-{safe_id}" '
             f'data-symbol="{r["symbol"]}" data-exchange="{r["exchange"]}" '
-            f'onclick="toggleWatchlist(this)" title="Watch this pair">☆</button>'
+            f'onclick="toggleWatchlist(this)" title="Watch">☆</button>'
             f'</td>'
             f'<td><span class="sym-name">{r["symbol"]}</span></td>'
-            f'<td><span class="exch-badge">{exch}</span></td>'
+            f'<td><span class="exch-badge exch-{r["exchange"]}">{exch}</span></td>'
             f'<td><span class="num">{_pct(r["rate_8h"])}</span></td>'
             f'<td><span class="{net_cls}" style="font-weight:600">{net_label}</span></td>'
             f'<td><span class="brkeven">{be_str} cycles</span></td>'
             f'<td class="spark-cell"><canvas id="spark-{safe_id}" data-spark-key="{spark_key}" width="80" height="28"></canvas></td>'
             f'</tr>'
             f'<tr class="chart-row" id="chart-{r["symbol"]}-{r["exchange"]}" style="display:none">'
-            f'<td colspan="7">'
+            f'<td colspan="8">'
             f'<div class="chart-inner"><canvas id="canvas-{r["symbol"]}-{r["exchange"]}" height="90"></canvas></div>'
             f'</td>'
             f'</tr>'
         )
+
+    # Blurred Pro-only rows
+    if locked:
+        for r in locked:
+            exch = r["exchange"].upper()
+            net_label = _pct(r["net_apy"])
+            be = r["breakeven_cycles"]
+            be_str = f"{be:.1f}" if be is not None else "∞"
+            rows.append(
+                f'<tr class="data-row locked-row" onclick="document.location=\'/billing/checkout\'">'
+                f'<td style="padding:.7rem .5rem .7rem .75rem"><span style="color:var(--mist)">☆</span></td>'
+                f'<td><span class="sym-name locked-blur">{r["symbol"]}</span></td>'
+                f'<td><span class="exch-badge exch-{r["exchange"]} locked-blur">{exch}</span></td>'
+                f'<td><span class="num locked-blur">{_pct(r["rate_8h"])}</span></td>'
+                f'<td><span class="num pos locked-blur" style="font-weight:600">{net_label}</span></td>'
+                f'<td><span class="brkeven locked-blur">{be_str} cycles</span></td>'
+                f'<td></td>'
+                f'</tr>'
+            )
+        rows.append(
+            f'<tr><td colspan="7" style="padding:.75rem 1rem 1.25rem;text-align:center">'
+            f'<a href="/billing/checkout" class="pro-unlock-btn">'
+            f'Unlock {len(locked)} more pairs — Upgrade to Pro</a>'
+            f'</td></tr>'
+        )
+
     return "\n".join(rows)
 
 
 def _render_summary(results: list[dict]) -> str:
     profitable = [r for r in results if r["is_profitable"]]
+    all_results = _state["results"]
+    all_profitable = [r for r in all_results if r["is_profitable"]]
     best = max((r["net_apy"] for r in profitable), default=None)
     best_str = _pct(best) if best is not None else "—"
-    n_pairs = len(profitable)
+    n_pairs = len(all_profitable)
+    avg = (sum(r["net_apy"] for r in all_profitable) / n_pairs) if n_pairs else None
+    avg_str = _pct(avg) if avg is not None else "—"
+    exchanges = len({r["exchange"] for r in all_results})
     return (
         f'<div class="stat"><span class="stat-n">{best_str}</span>'
         f'<span class="stat-l">best net APY</span></div>'
         f'<div class="stat"><span class="stat-n">{n_pairs}</span>'
         f'<span class="stat-l">pairs above fees</span></div>'
+        f'<div class="stat"><span class="stat-n">{avg_str}</span>'
+        f'<span class="stat-l">avg net APY</span></div>'
+        f'<div class="stat"><span class="stat-n">{exchanges}</span>'
+        f'<span class="stat-l">exchanges</span></div>'
     )
 
 
@@ -491,11 +523,12 @@ def dashboard(request: Request):
     user = _current_user(request)
     if not user:
         return RedirectResponse("/auth/request", status_code=302)
-    results, missing = _tier_results(user)
+    visible, locked = _tier_results(user)
+    exchanges = sorted({r["exchange"] for r in _state["results"]})
     return templates.TemplateResponse(
         request,
         "dashboard.html",
-        {"user": user, "missing_count": missing},
+        {"user": user, "locked_count": len(locked), "exchanges": exchanges},
     )
 
 
@@ -842,11 +875,39 @@ async def telegram_webhook(request: Request):
 # HTMX partials — tier-gated
 # ---------------------------------------------------------------------------
 
+@app.get("/htmx/stats", response_class=HTMLResponse)
+def htmx_stats():
+    results = _state["results"]
+    profitable = [r for r in results if r["is_profitable"]]
+    best = max((r["net_apy"] for r in profitable), default=None)
+    avg = (sum(r["net_apy"] for r in profitable) / len(profitable)) if profitable else None
+    exchanges = len({r["exchange"] for r in results})
+    # Biggest mover: highest APY among profitable
+    mover = max(profitable, key=lambda r: r["net_apy"], default=None)
+    mover_sym = mover["symbol"].replace("USDT","").replace("-PERP","") if mover else "—"
+
+    def card(n, label, pos=False):
+        cls = 'n pos' if pos else 'n'
+        return (f'<div class="stat-card"><div class="{cls}">{n}</div>'
+                f'<div class="l">{label}</div></div>')
+
+    cards = (
+        card(f'+{best*100:.2f}%' if best else '—', 'Best net APY', pos=bool(best and best > 0))
+        + card(str(len(profitable)), 'Pairs above fees')
+        + card(f'+{avg*100:.2f}%' if avg else '—', 'Avg net APY', pos=bool(avg and avg > 0))
+        + card(mover_sym, 'Top instrument')
+    )
+    return (
+        f'<div id="stats-section" hx-get="/htmx/stats" hx-trigger="every 30s" hx-swap="outerHTML">'
+        f'<div class="stats-row">{cards}</div></div>'
+    )
+
+
 @app.get("/htmx/rows", response_class=HTMLResponse)
 def htmx_rows(request: Request):
     user = _current_user(request)
-    results, _ = _tier_results(user)
-    return _render_table_rows(results)
+    visible, locked = _tier_results(user)
+    return _render_table_rows(visible, locked)
 
 
 @app.get("/htmx/summary", response_class=HTMLResponse)
