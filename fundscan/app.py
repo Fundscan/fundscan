@@ -655,19 +655,35 @@ def auth_logout():
 
 @app.get("/billing/checkout")
 def billing_checkout(request: Request):
-    """Pro subscriptions temporarily closed — returns a holding page."""
-    return HTMLResponse("""<!DOCTYPE html>
+    """Redirect logged-in users to Stripe checkout. Guests go to sign-in first."""
+    user = _current_user(request)
+    if not user:
+        return RedirectResponse("/auth/request", status_code=302)
+    if user.get("tier") == "pro":
+        return RedirectResponse("/account", status_code=302)
+
+    from .billing import checkout_url
+    stripe_key = os.getenv("STRIPE_SECRET_KEY", "")
+    price_id = os.getenv("STRIPE_PRICE_ID", "")
+    if not stripe_key or not price_id:
+        return HTMLResponse("""<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"><title>Coming Soon — FundScan</title>
 <style>body{background:#0A1424;color:#EEF1F6;font-family:system-ui,sans-serif;
   display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}
 .box{max-width:420px;padding:2.5rem;border:1px solid rgba(201,165,81,.4);border-radius:8px;background:#0F1B30}
-p{color:#A7B2C4;margin:.75rem 0;font-size:.95rem}
-a{color:#C9A551;text-decoration:none}</style></head>
+p{color:#A7B2C4;margin:.75rem 0;font-size:.95rem}a{color:#C9A551;text-decoration:none}</style></head>
 <body><div class="box">
 <h1 style="font-size:1.2rem;margin-bottom:.5rem">Pro subscriptions opening soon</h1>
-<p>We're finishing a few things before opening up. Check back shortly.</p>
+<p>We're finalising payments. Check back shortly.</p>
 <p style="margin-top:1.5rem"><a href="/">← Back to home</a></p>
 </div></body></html>""")
+
+    try:
+        url = checkout_url(user["email"])
+        return RedirectResponse(url, status_code=302)
+    except Exception as e:
+        log.error("Stripe checkout failed for %s: %s", user["email"], e)
+        raise HTTPException(500, "Could not create checkout session")
 
 
 @app.post("/billing/webhook")
