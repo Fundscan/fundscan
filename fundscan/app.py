@@ -427,35 +427,42 @@ def _pct(v: float) -> str:
 
 def _render_table_rows(results: list[dict]) -> str:
     if not results:
-        return '<tr><td colspan="7" style="text-align:center;color:var(--muted)">Fetching data…</td></tr>'
+        return (
+            '<tr class="data-row"><td colspan="7" '
+            'style="text-align:center;color:var(--mist);font-family:var(--mono);'
+            'font-size:12px;letter-spacing:.06em;padding:2rem 1rem">'
+            'Fetching data…</td></tr>'
+        )
 
     rows = []
     for r in results:
         profitable = r["is_profitable"]
-        row_class = "" if profitable else " class='greyed'"
-        net_label = _pct(r["net_apy"]) if profitable else f"{_pct(r['net_apy'])} — below fees"
-        net_color = "#22c55e" if profitable else "var(--muted)"
+        row_cls = "data-row" if profitable else "data-row greyed"
+        net_cls = "num pos" if profitable else "num neg"
+        net_label = _pct(r["net_apy"]) if profitable else f"{_pct(r['net_apy'])}"
         be = r["breakeven_cycles"]
         be_str = f"{be:.1f}" if be is not None else "∞"
         spark_key = f"{r['exchange']}:{r['symbol']}"
-        spark_id = f"spark-{r['exchange']}-{r['symbol']}".replace("/", "_")
-        star_id = f"star-{r['exchange']}-{r['symbol']}".replace("/", "_")
+        safe_id = f"{r['exchange']}-{r['symbol']}".replace("/", "_")
+        exch = r["exchange"].title()
         rows.append(
-            f'<tr{row_class} data-symbol="{r["symbol"]}" data-exchange="{r["exchange"]}" onclick="toggleChart(this)">'
-            f'<td onclick="event.stopPropagation()">'
-            f'<button class="star-btn" id="{star_id}" '
+            f'<tr class="{row_cls}" data-symbol="{r["symbol"]}" data-exchange="{r["exchange"]}" onclick="toggleChart(this)">'
+            f'<td style="padding:.7rem .5rem .7rem .75rem" onclick="event.stopPropagation()">'
+            f'<button class="star-btn" id="star-{safe_id}" '
             f'data-symbol="{r["symbol"]}" data-exchange="{r["exchange"]}" '
-            f'onclick="toggleWatchlist(this)" title="Add to watchlist">☆</button>'
+            f'onclick="toggleWatchlist(this)" title="Watch this pair">☆</button>'
             f'</td>'
-            f'<td>{r["symbol"]}</td>'
-            f'<td>{r["exchange"].title()}</td>'
-            f'<td>{_pct(r["rate_8h"])}</td>'
-            f'<td style="color:{net_color};font-weight:600">{net_label}</td>'
-            f'<td>{be_str}</td>'
-            f'<td class="spark-cell"><canvas id="{spark_id}" data-spark-key="{spark_key}" width="80" height="28"></canvas></td>'
+            f'<td><span class="sym-name">{r["symbol"]}</span></td>'
+            f'<td><span class="exch-badge">{exch}</span></td>'
+            f'<td><span class="num">{_pct(r["rate_8h"])}</span></td>'
+            f'<td><span class="{net_cls}" style="font-weight:600">{net_label}</span></td>'
+            f'<td><span class="brkeven">{be_str} cycles</span></td>'
+            f'<td class="spark-cell"><canvas id="spark-{safe_id}" data-spark-key="{spark_key}" width="80" height="28"></canvas></td>'
             f'</tr>'
             f'<tr class="chart-row" id="chart-{r["symbol"]}-{r["exchange"]}" style="display:none">'
-            f'<td colspan="7"><canvas id="canvas-{r["symbol"]}-{r["exchange"]}" height="80"></canvas></td>'
+            f'<td colspan="7">'
+            f'<div class="chart-inner"><canvas id="canvas-{r["symbol"]}-{r["exchange"]}" height="90"></canvas></div>'
+            f'</td>'
             f'</tr>'
         )
     return "\n".join(rows)
@@ -465,10 +472,12 @@ def _render_summary(results: list[dict]) -> str:
     profitable = [r for r in results if r["is_profitable"]]
     best = max((r["net_apy"] for r in profitable), default=None)
     best_str = _pct(best) if best is not None else "—"
+    n_pairs = len(profitable)
     return (
-        f'<span class="stat-value">{best_str}</span><span class="stat-label"> best net APY</span>'
-        f'&nbsp;&nbsp;&nbsp;'
-        f'<span class="stat-value">{len(profitable)}</span><span class="stat-label"> pairs above fees</span>'
+        f'<div class="stat"><span class="stat-n">{best_str}</span>'
+        f'<span class="stat-l">best net APY</span></div>'
+        f'<div class="stat"><span class="stat-n">{n_pairs}</span>'
+        f'<span class="stat-l">pairs above fees</span></div>'
     )
 
 
@@ -863,7 +872,11 @@ def htmx_summary(request: Request):
     user = _current_user(request)
     results, _ = _tier_results(user)
     content = _render_summary(results)
-    return f'<div class="summary" id="summary" hx-get="/htmx/summary" hx-trigger="every 30s" hx-swap="outerHTML">{content}</div>'
+    return (
+        f'<div class="summary-bar" id="summary" '
+        f'hx-get="/htmx/summary" hx-trigger="every 30s" hx-swap="outerHTML">'
+        f'{content}</div>'
+    )
 
 
 @app.get("/htmx/status", response_class=HTMLResponse)
@@ -872,11 +885,11 @@ def htmx_status():
     if last:
         dt = datetime.fromisoformat(last)
         secs = int((datetime.now(timezone.utc) - dt).total_seconds())
-        label = f"updated {secs}s ago"
+        label = f"LIVE · {secs}s ago"
     else:
-        label = "fetching…"
+        label = "FETCHING"
     return (
-        f'<div class="status" id="status-bar" '
+        f'<span class="live-badge" id="status-bar" '
         f'hx-get="/htmx/status" hx-trigger="every 30s" hx-swap="outerHTML">'
-        f'{label}</div>'
+        f'{label}</span>'
     )
