@@ -135,6 +135,15 @@ tbody tr.greyed td{opacity:.55}
                 color:var(--gold);text-decoration:none;transition:all .25s;background:rgba(201,165,81,.06)}
 .pro-unlock-btn:hover{background:rgba(201,165,81,.14);border-color:var(--gold)}
 
+.gross-strike{font-family:var(--mono);font-size:11px;color:var(--mist);text-decoration:line-through;
+             margin-right:7px;white-space:nowrap}
+.liq-badge{display:inline-block;font-family:var(--mono);font-size:9.5px;letter-spacing:.08em;
+           text-transform:uppercase;padding:2px 7px;border-radius:3px;border:1px solid;white-space:nowrap}
+.liq-green{color:var(--green);border-color:rgba(63,190,142,.35);background:rgba(63,190,142,.08)}
+.liq-amber{color:var(--gold);border-color:rgba(201,165,81,.35);background:rgba(201,165,81,.08)}
+.liq-red{color:var(--red);border-color:rgba(217,106,106,.35);background:rgba(217,106,106,.08)}
+.size-label{font-family:var(--mono);font-size:11px;letter-spacing:.06em;color:var(--mist);
+            text-transform:uppercase;margin-right:2px}
 .sym-name{font-family:var(--sans);font-weight:600;font-size:13.5px;color:var(--ivory)}
 .exch-badge{display:inline-block;font-family:var(--mono);font-size:10px;letter-spacing:.1em;
             text-transform:uppercase;padding:2px 7px;border-radius:3px;
@@ -176,7 +185,7 @@ tr.chart-row td{padding:.5rem 1rem 1.25rem;background:rgba(15,27,48,.4);border-b
   nav,.toolbar,.stats-row,.container,.tier-banner{padding-left:18px;padding-right:18px}
   .stats-row{grid-template-columns:repeat(2,1fr)}
   td:nth-child(3),th:nth-child(3){display:none}
-  .spark-cell,thead th:nth-child(7),tbody td:nth-child(7){display:none}
+  .spark-cell,thead th:nth-child(8),tbody td:nth-child(8){display:none}
   .sort-select{margin-left:0}
 }
 </style>
@@ -236,6 +245,13 @@ tr.chart-row td{padding:.5rem 1rem 1.25rem;background:rgba(15,27,48,.4);border-b
     <button class="tab" data-exchange="{{ ex }}" onclick="setExchange(this)">{{ ex.upper() }}</button>
     {% endfor %}
   </div>
+  <span class="size-label">Size:</span>
+  <div class="filter-tabs" id="size-tabs">
+    {% for size in position_sizes %}
+    <button class="tab{% if size == default_position_size %} active{% endif %}"
+            data-size="{{ size }}" onclick="setPositionSize(this)">£{{ '{:,}'.format(size) }}</button>
+    {% endfor %}
+  </div>
   <select class="sort-select" id="sort-select" onchange="sortRows()">
     <option value="apy-desc">Net APY ↓</option>
     <option value="apy-asc">Net APY ↑</option>
@@ -252,13 +268,14 @@ tr.chart-row td{padding:.5rem 1rem 1.25rem;background:rgba(15,27,48,.4);border-b
         <th>Instrument</th>
         <th>Exchange</th>
         <th onclick="setSortCol('rate')" id="th-rate">Rate / 8h</th>
-        <th onclick="setSortCol('apy')" id="th-apy" class="sort-active">Net APY ▾</th>
+        <th onclick="setSortCol('apy')" id="th-apy" class="sort-active">Net APY at size ▾</th>
+        <th>Liquidity</th>
         <th>Breakeven</th>
         <th>24h trend</th>
       </tr>
     </thead>
     <tbody id="rates-body"
-           hx-get="/htmx/rows" hx-trigger="every 30s, load" hx-swap="innerHTML">
+           hx-get="/htmx/rows" hx-trigger="every 30s, load" hx-vals="js:{size: _positionSize}" hx-swap="innerHTML">
       {% for _ in range(5) %}
       <tr class="skeleton-row">
         <td><span class="skel" style="width:16px"></span></td>
@@ -266,6 +283,7 @@ tr.chart-row td{padding:.5rem 1rem 1.25rem;background:rgba(15,27,48,.4);border-b
         <td><span class="skel" style="width:58px"></span></td>
         <td><span class="skel" style="width:52px"></span></td>
         <td><span class="skel" style="width:68px"></span></td>
+        <td><span class="skel" style="width:56px"></span></td>
         <td><span class="skel" style="width:80px"></span></td>
         <td><span class="skel" style="width:80px;height:26px;border-radius:2px"></span></td>
       </tr>
@@ -273,7 +291,10 @@ tr.chart-row td{padding:.5rem 1rem 1.25rem;background:rgba(15,27,48,.4);border-b
     </tbody>
   </table>
   <p class="note">
-    Net APY = gross annual yield − 1.09% round-trip fees (0.26% × 4 legs + 0.05% slippage).
+    Net APY at size = gross annual yield − 1.04% round-trip fees (0.26% × 4 legs) − estimated
+    entry+exit slippage for your position size, walked against live order book depth.
+    Liquidity badge flags position size as % of 24h volume: <b style="color:var(--green)">green</b> ≤0.25%,
+    <b style="color:var(--gold)">amber</b> ≤1%, <b style="color:var(--red)">red</b> above 1%.
     Click any row for 7-day rate history. Rates refresh every 60 s.
   </p>
 </div>
@@ -282,6 +303,7 @@ tr.chart-row td{padding:.5rem 1rem 1.25rem;background:rgba(15,27,48,.4);border-b
 const activeCharts = {};
 let _sparklineData = {};
 let _activeExchange = 'all';
+let _positionSize = {{ default_position_size }};
 
 // ── Sparklines ──────────────────────────────────────────────────────────────
 async function loadSparklines() {
@@ -370,10 +392,18 @@ async function toggleChart(row) {
 
 // ── Filter / search / sort ───────────────────────────────────────────────────
 function setExchange(btn) {
-  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+  document.querySelectorAll('#exchange-tabs .tab').forEach(t=>t.classList.remove('active'));
   btn.classList.add('active');
   _activeExchange = btn.dataset.exchange;
   filterRows();
+}
+
+// ── Position size — re-ranks the board by net yield at that size ───────────
+function setPositionSize(btn) {
+  document.querySelectorAll('#size-tabs .tab').forEach(t=>t.classList.remove('active'));
+  btn.classList.add('active');
+  _positionSize = parseInt(btn.dataset.size, 10);
+  htmx.ajax('GET', `/htmx/rows?size=${_positionSize}`, {target: '#rates-body', swap: 'innerHTML'});
 }
 
 function filterRows() {

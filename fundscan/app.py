@@ -22,6 +22,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 
 from . import math as fm
+from . import sizing
 from .db import init_db, insert_snapshots, query_delayed, query_history, query_latest, query_sparklines, get_watchlist, toggle_watchlist
 from .scanner import scan
 from .alerts import (check_and_send_alerts, check_anomalies, send_daily_digest,
@@ -413,6 +414,16 @@ def _pct(v: float) -> str:
     return f"{v * 100:.2f}%"
 
 
+_LIQ_LABELS = {"green": "LIQUID", "amber": "THIN", "red": "ILLIQUID"}
+
+
+def _liquidity_badge(r: dict) -> str:
+    flag = r.get("liquidity_flag", "red")
+    pct = r.get("liquidity_pct")
+    title = f"{pct * 100:.2f}% of 24h volume" if pct is not None else "24h volume unknown"
+    return f'<span class="liq-badge liq-{flag}" title="{title}">{_LIQ_LABELS[flag]}</span>'
+
+
 def _render_table_rows(results: list[dict], locked: list[dict] | None = None) -> str:
     if not results and not locked:
         return (
@@ -424,10 +435,14 @@ def _render_table_rows(results: list[dict], locked: list[dict] | None = None) ->
 
     rows = []
     for r in results:
-        profitable = r["is_profitable"]
+        # Headline metric is net-yield-at-size where available (sized rows
+        # carry net_apy_at_size); falls back to the flat net_apy otherwise.
+        net_at_size = r.get("net_apy_at_size", r["net_apy"])
+        profitable = net_at_size > 0
         row_cls = "data-row" if profitable else "data-row greyed"
         net_cls = "num pos" if profitable else "num neg"
-        net_label = _pct(r["net_apy"])
+        gross_label = _pct(r["gross_apy"])
+        net_label = _pct(net_at_size)
         be = r["breakeven_cycles"]
         be_str = f"{be:.1f}" if be is not None else "∞"
         spark_key = f"{r['exchange']}:{r['symbol']}"
@@ -435,7 +450,7 @@ def _render_table_rows(results: list[dict], locked: list[dict] | None = None) ->
         exch = r["exchange"].upper()
         rows.append(
             f'<tr class="{row_cls}" data-symbol="{r["symbol"]}" data-exchange="{r["exchange"]}"'
-            f' data-apy="{r["net_apy"]}" onclick="toggleChart(this)">'
+            f' data-apy="{net_at_size}" onclick="toggleChart(this)">'
             f'<td style="padding:.7rem .5rem .7rem .75rem" onclick="event.stopPropagation()">'
             f'<button class="star-btn" id="star-{safe_id}" '
             f'data-symbol="{r["symbol"]}" data-exchange="{r["exchange"]}" '
@@ -444,7 +459,9 @@ def _render_table_rows(results: list[dict], locked: list[dict] | None = None) ->
             f'<td><span class="sym-name">{r["symbol"]}</span></td>'
             f'<td><span class="exch-badge exch-{r["exchange"]}">{exch}</span></td>'
             f'<td><span class="num">{_pct(r["rate_8h"])}</span></td>'
-            f'<td><span class="{net_cls}" style="font-weight:600">{net_label}</span></td>'
+            f'<td><span class="gross-strike">{gross_label}</span>'
+            f'<span class="{net_cls}" style="font-weight:600">{net_label}</span></td>'
+            f'<td>{_liquidity_badge(r)}</td>'
             f'<td><span class="brkeven">{be_str} cycles</span></td>'
             f'<td class="spark-cell"><canvas id="spark-{safe_id}" data-spark-key="{spark_key}" width="80" height="28"></canvas></td>'
             f'</tr>'
@@ -459,7 +476,9 @@ def _render_table_rows(results: list[dict], locked: list[dict] | None = None) ->
     if locked:
         for r in locked:
             exch = r["exchange"].upper()
-            net_label = _pct(r["net_apy"])
+            net_at_size = r.get("net_apy_at_size", r["net_apy"])
+            gross_label = _pct(r["gross_apy"])
+            net_label = _pct(net_at_size)
             be = r["breakeven_cycles"]
             be_str = f"{be:.1f}" if be is not None else "∞"
             rows.append(
@@ -468,13 +487,15 @@ def _render_table_rows(results: list[dict], locked: list[dict] | None = None) ->
                 f'<td><span class="sym-name locked-blur">{r["symbol"]}</span></td>'
                 f'<td><span class="exch-badge exch-{r["exchange"]} locked-blur">{exch}</span></td>'
                 f'<td><span class="num locked-blur">{_pct(r["rate_8h"])}</span></td>'
-                f'<td><span class="num pos locked-blur" style="font-weight:600">{net_label}</span></td>'
+                f'<td><span class="gross-strike locked-blur">{gross_label}</span>'
+                f'<span class="num pos locked-blur" style="font-weight:600">{net_label}</span></td>'
+                f'<td class="locked-blur">{_liquidity_badge(r)}</td>'
                 f'<td><span class="brkeven locked-blur">{be_str} cycles</span></td>'
                 f'<td></td>'
                 f'</tr>'
             )
         rows.append(
-            f'<tr><td colspan="7" style="padding:.75rem 1rem 1.25rem;text-align:center">'
+            f'<tr><td colspan="8" style="padding:.75rem 1rem 1.25rem;text-align:center">'
             f'<a href="/billing/checkout" class="pro-unlock-btn">'
             f'Unlock {len(locked)} more pairs — Upgrade to Pro</a>'
             f'</td></tr>'
@@ -538,7 +559,13 @@ def dashboard(request: Request):
     return templates.TemplateResponse(
         request,
         "dashboard.html",
-        {"user": user, "locked_count": len(locked), "exchanges": exchanges},
+        {
+            "user": user,
+            "locked_count": len(locked),
+            "exchanges": exchanges,
+            "position_sizes": sizing.POSITION_SIZES,
+            "default_position_size": sizing.DEFAULT_POSITION_SIZE,
+        },
     )
 
 
@@ -1101,9 +1128,18 @@ def htmx_stats():
 
 
 @app.get("/htmx/rows", response_class=HTMLResponse)
-def htmx_rows(request: Request):
+def htmx_rows(request: Request, size: int = sizing.DEFAULT_POSITION_SIZE):
+    """
+    Table body partial. `size` is the trader's position size (GBP) — the
+    visible slice is re-ranked by net yield at that size so illiquid
+    outliers sink instead of dominating the board. Tier gating (which
+    pairs a free user can see at all) is unaffected by position size.
+    """
+    if size not in sizing.POSITION_SIZES:
+        size = sizing.DEFAULT_POSITION_SIZE
     user = _current_user(request)
     visible, locked = _tier_results(user)
+    visible = sizing.rank_by_size(visible, size)
     return _render_table_rows(visible, locked)
 
 
