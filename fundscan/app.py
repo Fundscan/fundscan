@@ -15,6 +15,7 @@ from typing import Optional
 import asyncio
 import csv
 import io
+import traceback
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
@@ -688,14 +689,13 @@ async def billing_create_session(request: Request):
     if not stripe_key or not price_id:
         raise HTTPException(500, "Stripe not configured")
 
-    import traceback
     try:
         from .billing import create_embedded_session
         client_secret = create_embedded_session(user["email"])
         return {"clientSecret": client_secret}
     except Exception as e:
         log.error("Stripe create-session failed for %s:\n%s", user["email"], traceback.format_exc())
-        raise HTTPException(500, str(e))
+        raise HTTPException(500, "Could not load checkout. Please try again or email hello@fundscan.uk.")
 
 
 @app.get("/billing/return")
@@ -811,7 +811,7 @@ def account(request: Request):
         action_html = f'<a href="{manage_url}" style="color:#C9A551">Manage subscription →</a>'
     else:
         plan_html = "Free"
-        action_html = '<span style="color:#A7B2C4;font-size:.9rem">Pro subscriptions opening soon</span>'
+        action_html = '<a href="/billing/checkout" style="color:#C9A551;font-weight:600">Upgrade to Pro — £20/month →</a>'
 
     # Telegram section
     from .db import get_conn as _get_conn
@@ -930,6 +930,118 @@ def update_alert_threshold(request: Request, min_net_apy: int = 50):
             (min_net_apy / 100, user["id"])
         )
     return RedirectResponse("/account", status_code=302)
+
+
+# ---------------------------------------------------------------------------
+# Admin page
+# ---------------------------------------------------------------------------
+
+ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "boursierbilguun207@gmail.com")
+
+
+@app.get("/admin", response_class=HTMLResponse)
+def admin(request: Request):
+    user = _current_user(request)
+    if not user or user["email"] != ADMIN_EMAIL:
+        raise HTTPException(403, "Forbidden")
+
+    with get_conn() as conn:
+        total_users = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+        pro_users = conn.execute("SELECT COUNT(*) FROM users WHERE tier = 'pro'").fetchone()[0]
+        free_users = total_users - pro_users
+        recent_users = conn.execute(
+            "SELECT email, tier, created_at FROM users ORDER BY created_at DESC LIMIT 20"
+        ).fetchall()
+        recent_webhooks = conn.execute(
+            "SELECT received_at, event_type FROM webhook_events ORDER BY received_at DESC LIMIT 10"
+        ).fetchall()
+
+    mrr = pro_users * 20
+
+    def tier_badge(tier):
+        if tier == "pro":
+            return '<span style="color:#3FBE8E;font-weight:600">Pro</span>'
+        return '<span style="color:#67748A">Free</span>'
+
+    user_rows = "".join(
+        f'<tr><td>{r["email"]}</td><td>{tier_badge(r["tier"])}</td>'
+        f'<td style="color:#67748A;font-size:.85rem">{r["created_at"][:10]}</td></tr>'
+        for r in recent_users
+    )
+
+    webhook_rows = "".join(
+        f'<tr><td style="font-family:monospace;font-size:.85rem">{r["event_type"]}</td>'
+        f'<td style="color:#67748A;font-size:.85rem">{r["received_at"][:19].replace("T"," ")}</td></tr>'
+        for r in recent_webhooks
+    ) or '<tr><td colspan="2" style="color:#67748A">No webhook events yet</td></tr>'
+
+    results = _state["results"]
+    last_fetch = _state["last_fetch_at"] or "—"
+    fetch_errors = _state["fetch_errors"]
+
+    return HTMLResponse(f"""<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><title>Admin — FundScan</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400&display=swap" rel="stylesheet">
+<style>
+:root{{--navy:#0A1424;--navy-2:#0F1B30;--navy-3:#16233C;--ivory:#EEF1F6;--soft:#A7B2C4;
+  --mist:#67748A;--hairline:rgba(167,178,196,.13);--gold:#C9A551;--green:#3FBE8E;
+  --sans:'Instrument Sans',system-ui,sans-serif;--mono:'IBM Plex Mono',monospace}}
+*{{margin:0;padding:0;box-sizing:border-box}}
+body{{background:var(--navy);color:var(--ivory);font-family:var(--sans);
+  min-height:100vh;padding:2rem;-webkit-font-smoothing:antialiased}}
+h1{{font-size:1.4rem;font-weight:600;margin-bottom:2rem;color:var(--ivory)}}
+h1 span{{color:var(--gold)}}
+.grid{{display:grid;grid-template-columns:repeat(4,1fr);gap:1rem;margin-bottom:2rem}}
+.stat-card{{background:var(--navy-2);border:1px solid var(--hairline);border-radius:8px;padding:1.25rem}}
+.stat-card .n{{font-family:var(--mono);font-size:2rem;font-weight:500;color:var(--ivory)}}
+.stat-card .n.gold{{color:var(--gold)}}
+.stat-card .n.green{{color:var(--green)}}
+.stat-card .l{{color:var(--mist);font-size:.8rem;margin-top:.25rem;letter-spacing:.06em;text-transform:uppercase}}
+.section{{background:var(--navy-2);border:1px solid var(--hairline);border-radius:8px;padding:1.5rem;margin-bottom:1.5rem}}
+.section h2{{font-size:.85rem;letter-spacing:.1em;text-transform:uppercase;color:var(--gold);margin-bottom:1rem}}
+table{{width:100%;border-collapse:collapse}}
+td{{padding:.6rem .5rem;border-bottom:1px solid var(--hairline);font-size:.9rem;color:var(--soft)}}
+td:first-child{{color:var(--ivory)}}
+tr:last-child td{{border-bottom:none}}
+.health{{display:flex;gap:2rem;flex-wrap:wrap}}
+.hitem{{font-size:.9rem}}.hitem .k{{color:var(--mist);font-size:.78rem;text-transform:uppercase;letter-spacing:.06em;margin-bottom:.2rem}}
+.hitem .v{{font-family:var(--mono);color:var(--ivory)}}
+.hitem .v.err{{color:#D96A6A}}
+a.back{{color:var(--mist);font-size:.85rem;text-decoration:none;display:inline-block;margin-bottom:1.5rem}}
+a.back:hover{{color:var(--gold)}}
+</style></head>
+<body>
+<a href="/app" class="back">← Dashboard</a>
+<h1>Fund<span>Scan</span> Admin</h1>
+
+<div class="grid">
+  <div class="stat-card"><div class="n">{total_users}</div><div class="l">Total users</div></div>
+  <div class="stat-card"><div class="n green">{pro_users}</div><div class="l">Pro users</div></div>
+  <div class="stat-card"><div class="n">{free_users}</div><div class="l">Free users</div></div>
+  <div class="stat-card"><div class="n gold">£{mrr}</div><div class="l">MRR (est.)</div></div>
+</div>
+
+<div class="section">
+  <h2>System health</h2>
+  <div class="health">
+    <div class="hitem"><div class="k">Pairs tracked</div><div class="v">{len(results)}</div></div>
+    <div class="hitem"><div class="k">Last fetch</div><div class="v">{str(last_fetch)[:19].replace("T"," ")}</div></div>
+    <div class="hitem"><div class="k">Fetch errors</div><div class="v {'err' if fetch_errors > 0 else ''}">{fetch_errors}</div></div>
+  </div>
+</div>
+
+<div class="section">
+  <h2>Recent signups</h2>
+  <table><tbody>{user_rows}</tbody></table>
+</div>
+
+<div class="section">
+  <h2>Recent webhook events</h2>
+  <table><tbody>{webhook_rows}</tbody></table>
+</div>
+
+</body></html>""")
 
 
 # ---------------------------------------------------------------------------
