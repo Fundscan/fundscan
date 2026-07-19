@@ -980,6 +980,7 @@ def admin(request: Request):
     results = _state["results"]
     last_fetch = _state["last_fetch_at"] or "—"
     fetch_errors = _state["fetch_errors"]
+    err_cls = "err" if fetch_errors > 0 else ""
 
     return HTMLResponse(f"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"><title>Admin — FundScan</title>
@@ -1029,7 +1030,7 @@ a.back:hover{{color:var(--gold)}}
   <div class="health">
     <div class="hitem"><div class="k">Pairs tracked</div><div class="v">{len(results)}</div></div>
     <div class="hitem"><div class="k">Last fetch</div><div class="v">{str(last_fetch)[:19].replace("T"," ")}</div></div>
-    <div class="hitem"><div class="k">Fetch errors</div><div class="v {'err' if fetch_errors > 0 else ''}">{fetch_errors}</div></div>
+    <div class="hitem"><div class="k">Fetch errors</div><div class="v {err_cls}">{fetch_errors}</div></div>
   </div>
 </div>
 
