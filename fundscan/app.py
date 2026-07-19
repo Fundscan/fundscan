@@ -662,19 +662,29 @@ def billing_checkout(request: Request):
     if user.get("tier") == "pro":
         return RedirectResponse("/account", status_code=302)
 
+    import traceback
     from .billing import checkout_url
     stripe_key = os.getenv("STRIPE_SECRET_KEY", "")
     price_id = os.getenv("STRIPE_PRICE_ID", "")
+
+    _diag = (
+        f"STRIPE_SECRET_KEY={'SET('+stripe_key[:8]+'...)' if stripe_key else 'MISSING'} | "
+        f"STRIPE_PRICE_ID={'SET('+price_id+')' if price_id else 'MISSING'}"
+    )
+    log.info("billing_checkout diagnostics: %s", _diag)
+
     if not stripe_key or not price_id:
-        return HTMLResponse("""<!DOCTYPE html>
-<html lang="en"><head><meta charset="utf-8"><title>Coming Soon — FundScan</title>
-<style>body{background:#0A1424;color:#EEF1F6;font-family:system-ui,sans-serif;
-  display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}
-.box{max-width:420px;padding:2.5rem;border:1px solid rgba(201,165,81,.4);border-radius:8px;background:#0F1B30}
-p{color:#A7B2C4;margin:.75rem 0;font-size:.95rem}a{color:#C9A551;text-decoration:none}</style></head>
+        return HTMLResponse(f"""<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><title>Config Error — FundScan</title>
+<style>body{{background:#0A1424;color:#EEF1F6;font-family:system-ui,sans-serif;
+  display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}}
+.box{{max-width:520px;padding:2.5rem;border:1px solid rgba(201,165,81,.4);border-radius:8px;background:#0F1B30}}
+p{{color:#A7B2C4;margin:.75rem 0;font-size:.95rem}}a{{color:#C9A551;text-decoration:none}}
+code{{font-size:.8rem;color:#C9A551}}</style></head>
 <body><div class="box">
-<h1 style="font-size:1.2rem;margin-bottom:.5rem">Pro subscriptions opening soon</h1>
-<p>We're finalising payments. Check back shortly.</p>
+<h1 style="font-size:1.2rem;margin-bottom:.5rem">Stripe not configured</h1>
+<p>Missing env vars. Check Railway Variables.</p>
+<code>{_diag}</code>
 <p style="margin-top:1.5rem"><a href="/">← Back to home</a></p>
 </div></body></html>""")
 
@@ -682,8 +692,20 @@ p{color:#A7B2C4;margin:.75rem 0;font-size:.95rem}a{color:#C9A551;text-decoration
         url = checkout_url(user["email"])
         return RedirectResponse(url, status_code=302)
     except Exception as e:
-        log.error("Stripe checkout failed for %s: %s", user["email"], e)
-        raise HTTPException(500, "Could not create checkout session")
+        tb = traceback.format_exc()
+        log.error("Stripe checkout failed for %s:\n%s", user["email"], tb)
+        err_html = f"""<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><title>Checkout Error — FundScan</title>
+<style>body{{background:#0A1424;color:#EEF1F6;font-family:system-ui,sans-serif;margin:2rem}}
+pre{{background:#0F1B30;padding:1.5rem;border-radius:6px;font-size:.8rem;overflow:auto;color:#f87171}}
+a{{color:#C9A551}}</style></head>
+<body>
+<h2>Stripe checkout error</h2>
+<pre>{type(e).__name__}: {e}</pre>
+<pre>{tb}</pre>
+<p><a href="/">← Home</a></p>
+</body></html>"""
+        return HTMLResponse(err_html, status_code=500)
 
 
 @app.post("/billing/webhook")
