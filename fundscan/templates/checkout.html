@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Upgrade to Pro — FundScan</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,500;0,8..60,600;1,8..60,400&family=Instrument+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://js.stripe.com/v3/"></script>
+<style>
+:root{
+  --navy:#0A1424;
+  --navy-2:#0F1B30;
+  --navy-3:#16233C;
+  --ivory:#EEF1F6;
+  --soft:#A7B2C4;
+  --mist:#67748A;
+  --hairline:rgba(167,178,196,.13);
+  --hairline-2:rgba(167,178,196,.24);
+  --gold:#C9A551;
+  --gold-dim:#8A7238;
+  --green:#3FBE8E;
+  --serif:'Source Serif 4',Georgia,serif;
+  --sans:'Instrument Sans',system-ui,sans-serif;
+  --mono:'IBM Plex Mono',ui-monospace,monospace;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{background:var(--navy);color:var(--ivory);font-family:var(--sans);font-size:16px;line-height:1.7;-webkit-font-smoothing:antialiased;min-height:100vh}
+::selection{background:var(--gold);color:var(--navy)}
+
+/* ambient */
+.ambient{position:fixed;inset:0;z-index:-2;pointer-events:none;
+  background:
+    radial-gradient(900px 500px at 15% -5%,rgba(201,165,81,.06),transparent 60%),
+    radial-gradient(1100px 600px at 90% 15%,rgba(63,190,142,.045),transparent 60%),
+    radial-gradient(800px 700px at 50% 110%,rgba(201,165,81,.05),transparent 60%);
+  animation:drift 26s ease-in-out infinite alternate}
+@keyframes drift{from{transform:translateY(0) scale(1)}to{transform:translateY(-30px) scale(1.03)}}
+.grid-bg{position:fixed;inset:0;z-index:-1;pointer-events:none;opacity:.35;
+  background-image:linear-gradient(rgba(167,178,196,.045) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(167,178,196,.045) 1px,transparent 1px);
+  background-size:56px 56px;
+  mask-image:radial-gradient(1200px 800px at 50% 0%,black 30%,transparent 85%)}
+
+/* nav */
+nav{position:fixed;top:0;left:0;right:0;z-index:50;display:flex;align-items:center;justify-content:space-between;
+  padding:16px 48px;background:rgba(10,20,36,.78);backdrop-filter:blur(16px);border-bottom:1px solid var(--hairline)}
+.logo{display:flex;align-items:center;gap:12px;text-decoration:none}
+.logo-mark{width:34px;height:34px;flex-shrink:0}
+.logo-mark .ring{fill:none;stroke:var(--gold);stroke-width:1.6;stroke-dasharray:97;stroke-dashoffset:97;animation:draw 1.6s ease forwards .3s}
+.logo-mark .bar{fill:none;stroke:var(--green);stroke-width:2.2;stroke-linecap:round;stroke-dasharray:40;stroke-dashoffset:40;animation:draw 1s ease forwards 1.2s}
+.logo-mark .sweep{fill:none;stroke:var(--gold);stroke-width:1.6;stroke-linecap:round;opacity:.9;transform-origin:17px 17px;animation:sweep 4.5s cubic-bezier(.6,.1,.3,.9) infinite 2s}
+.logo-mark .dot{fill:var(--green);animation:dotpulse 2.6s ease-in-out infinite 2s}
+@keyframes draw{to{stroke-dashoffset:0}}
+@keyframes sweep{0%{transform:rotate(0deg);opacity:0}8%{opacity:.9}45%{transform:rotate(360deg);opacity:.9}55%{opacity:0}100%{transform:rotate(360deg);opacity:0}}
+@keyframes dotpulse{0%,100%{opacity:1}50%{opacity:.3}}
+.logo-word{font-family:var(--serif);font-weight:600;font-size:21px;letter-spacing:-.01em}
+.logo-word i{font-style:normal;color:var(--gold)}
+.nav-back{font-size:14px;color:var(--soft);text-decoration:none;display:flex;align-items:center;gap:6px;transition:color .2s}
+.nav-back:hover{color:var(--ivory)}
+.nav-back svg{width:14px;height:14px}
+
+/* layout */
+.page{min-height:100vh;display:flex;align-items:flex-start;justify-content:center;padding:110px 24px 60px;gap:60px}
+
+/* left panel */
+.plan-panel{flex:0 0 360px;padding-top:8px}
+.plan-label{font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--gold);font-weight:600;margin-bottom:20px}
+.plan-title{font-family:var(--serif);font-size:36px;font-weight:600;line-height:1.2;margin-bottom:8px}
+.plan-title span{color:var(--gold)}
+.plan-price{font-family:var(--mono);font-size:42px;font-weight:500;color:var(--ivory);margin:24px 0 4px;letter-spacing:-.02em}
+.plan-price sup{font-size:22px;vertical-align:top;margin-top:8px}
+.plan-price sub{font-size:16px;color:var(--soft);font-family:var(--sans);font-weight:400;letter-spacing:0}
+.plan-desc{color:var(--soft);font-size:14.5px;margin-bottom:32px}
+
+.features{list-style:none;display:flex;flex-direction:column;gap:12px;margin-bottom:36px}
+.features li{display:flex;align-items:flex-start;gap:12px;font-size:14.5px;color:var(--soft)}
+.features li::before{content:"";display:inline-block;width:16px;height:16px;flex-shrink:0;margin-top:3px;
+  background:var(--green);border-radius:50%;
+  -webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' d='M3 8l3.5 3.5L13 5'/%3E%3C/svg%3E") center/contain no-repeat;
+  mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' d='M3 8l3.5 3.5L13 5'/%3E%3C/svg%3E") center/contain no-repeat}
+.features li strong{color:var(--ivory);font-weight:500}
+
+.trust{display:flex;flex-direction:column;gap:8px;padding-top:24px;border-top:1px solid var(--hairline)}
+.trust-item{display:flex;align-items:center;gap:10px;font-size:13px;color:var(--mist)}
+.trust-item svg{width:15px;height:15px;color:var(--mist);flex-shrink:0}
+
+/* right panel — checkout form */
+.checkout-panel{flex:0 0 480px}
+.checkout-card{background:var(--navy-2);border:1px solid var(--hairline-2);border-radius:12px;padding:40px;box-shadow:0 24px 80px rgba(0,0,0,.4)}
+
+#checkout-container{min-height:300px}
+
+/* loading state */
+.checkout-loading{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:280px;gap:16px;color:var(--mist);font-size:14px}
+.spinner{width:32px;height:32px;border:2px solid var(--hairline-2);border-top-color:var(--gold);border-radius:50%;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* error state */
+.checkout-error{padding:20px;background:rgba(217,106,106,.08);border:1px solid rgba(217,106,106,.25);border-radius:8px;color:#f87171;font-size:14px}
+
+@media(max-width:900px){
+  .page{flex-direction:column;align-items:center;padding-top:90px;gap:40px}
+  .plan-panel{flex:none;width:100%;max-width:480px}
+  .checkout-panel{flex:none;width:100%;max-width:480px}
+}
+</style>
+</head>
+<body>
+
+<div class="ambient"></div>
+<div class="grid-bg"></div>
+
+<nav>
+  <a href="/" class="logo">
+    <svg class="logo-mark" viewBox="0 0 34 34" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <circle class="ring" cx="17" cy="17" r="15.4"/>
+      <line class="bar" x1="7" y1="24" x2="13" y2="16"/>
+      <line class="bar" x1="13" y1="16" x2="19" y2="20"/>
+      <line class="bar" x1="19" y1="20" x2="27" y2="10"/>
+      <line class="sweep" x1="17" y1="17" x2="17" y2="4"/>
+      <circle class="dot" cx="17" cy="17" r="2.2"/>
+    </svg>
+    <span class="logo-word">Fund<i>Scan</i></span>
+  </a>
+  <a href="/app" class="nav-back">
+    <svg viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M9 2L4 7l5 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    Back to dashboard
+  </a>
+</nav>
+
+<div class="page">
+
+  <!-- Left: plan summary -->
+  <div class="plan-panel">
+    <div class="plan-label">Upgrade</div>
+    <h1 class="plan-title">FundScan <span>Pro</span></h1>
+    <div class="plan-price"><sup>£</sup>20<sub> / month</sub></div>
+    <p class="plan-desc">Cancel any time. No lock-in.</p>
+
+    <ul class="features">
+      <li><span><strong>All pairs, all exchanges</strong> — every funding rate opportunity ranked by net yield</span></li>
+      <li><span><strong>Telegram alerts</strong> — get notified instantly when APY crosses your threshold</span></li>
+      <li><span><strong>CSV export</strong> — download historical rate data for your own analysis</span></li>
+      <li><span><strong>Live data, zero delay</strong> — no throttling, no free-tier holdback</span></li>
+      <li><span><strong>Fee-adjusted yields</strong> — every number shown net of 4-leg execution cost</span></li>
+    </ul>
+
+    <div class="trust">
+      <div class="trust-item">
+        <svg viewBox="0 0 15 15" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M7.5 1L2 3.5v4c0 3.3 2.3 6.4 5.5 7.1C10.7 13.9 13 10.8 13 7.5v-4L7.5 1z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>
+        Payments secured by Stripe
+      </div>
+      <div class="trust-item">
+        <svg viewBox="0 0 15 15" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M7.5 1.5a6 6 0 100 12 6 6 0 000-12z" stroke="currentColor" stroke-width="1.2"/><path d="M7.5 5v4M7.5 10.5v.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+        We never ask for your exchange API keys
+      </div>
+      <div class="trust-item">
+        <svg viewBox="0 0 15 15" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M2 7.5h11M7.5 2v11" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+        Read-only scanner — FundScan never executes trades
+      </div>
+    </div>
+  </div>
+
+  <!-- Right: Stripe embedded checkout -->
+  <div class="checkout-panel">
+    <div class="checkout-card">
+      <div id="checkout-container">
+        <div class="checkout-loading">
+          <div class="spinner"></div>
+          <span>Loading secure checkout…</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+(async () => {
+  const container = document.getElementById('checkout-container');
+
+  let clientSecret;
+  try {
+    const res = await fetch('/api/billing/create-session', { method: 'POST' });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || `HTTP ${res.status}`);
+    }
+    const data = await res.json();
+    clientSecret = data.clientSecret;
+  } catch (e) {
+    container.innerHTML = `<div class="checkout-error">Could not load checkout: ${e.message}<br><br><a href="/app" style="color:#C9A551">← Back to dashboard</a></div>`;
+    return;
+  }
+
+  const stripe = Stripe('{{ publishable_key }}');
+  const checkout = await stripe.initEmbeddedCheckout({ clientSecret });
+  container.innerHTML = '';
+  checkout.mount(container);
+})();
+</script>
+</body>
+</html>

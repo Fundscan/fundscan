@@ -51,18 +51,36 @@ def portal_url(email: str, return_url: str) -> str:
 def checkout_url(email: str) -> str:
     """
     Create a Stripe Checkout Session for a £20/month subscription.
-    Returns the hosted checkout URL.
+    Returns the hosted checkout URL (legacy – used as fallback).
     """
     stripe.api_key = STRIPE_SECRET_KEY
     session = stripe.checkout.Session.create(
         mode="subscription",
         customer_email=email,
-        client_reference_id=email,   # echoed back in webhook so we can find the user
+        client_reference_id=email,
         line_items=[{"price": STRIPE_PRICE_ID, "quantity": 1}],
         success_url=f"{os.getenv('BASE_URL', 'http://localhost:8000')}/account?upgraded=1",
         cancel_url=f"{os.getenv('BASE_URL', 'http://localhost:8000')}/billing/checkout",
     )
     return session.url
+
+
+def create_embedded_session(email: str) -> str:
+    """
+    Create a Stripe Checkout Session in embedded mode.
+    Returns client_secret for Stripe.js initEmbeddedCheckout().
+    """
+    stripe.api_key = STRIPE_SECRET_KEY
+    base = os.getenv('BASE_URL', 'http://localhost:8000')
+    session = stripe.checkout.Session.create(
+        mode="subscription",
+        ui_mode="embedded",
+        customer_email=email,
+        client_reference_id=email,
+        line_items=[{"price": STRIPE_PRICE_ID, "quantity": 1}],
+        return_url=f"{base}/billing/return?session_id={{CHECKOUT_SESSION_ID}}",
+    )
+    return session.client_secret
 
 
 def verify_webhook(body: bytes, sig_header: str) -> stripe.Event:

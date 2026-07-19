@@ -252,6 +252,15 @@ def api_sparklines():
 # Watchlist
 # ---------------------------------------------------------------------------
 
+@app.get("/api/me")
+def api_me(request: Request):
+    """Return current user's email and tier."""
+    user = _current_user(request)
+    if not user:
+        raise HTTPException(401, "Not logged in")
+    return {"email": user["email"], "tier": user.get("tier", "free")}
+
+
 @app.get("/api/watchlist")
 def api_watchlist(request: Request):
     """Return current user's watchlist as [{symbol, exchange}]."""
@@ -655,57 +664,93 @@ def auth_logout():
 
 @app.get("/billing/checkout")
 def billing_checkout(request: Request):
-    """Redirect logged-in users to Stripe checkout. Guests go to sign-in first."""
+    """Serve our custom embedded checkout page."""
     user = _current_user(request)
     if not user:
-        return RedirectResponse("/auth/request", status_code=302)
+        return RedirectResponse("/auth/request?next=/billing/checkout", status_code=302)
     if user.get("tier") == "pro":
         return RedirectResponse("/account", status_code=302)
+    pk = os.getenv("STRIPE_PUBLISHABLE_KEY", "")
+    return templates.TemplateResponse("checkout.html", {"request": request, "publishable_key": pk})
 
-    import traceback
-    from .billing import checkout_url
+
+@app.post("/api/billing/create-session")
+async def billing_create_session(request: Request):
+    """Create a Stripe embedded checkout session and return client_secret."""
+    user = _current_user(request)
+    if not user:
+        raise HTTPException(401, "Login required")
+    if user.get("tier") == "pro":
+        raise HTTPException(400, "Already Pro")
+
     stripe_key = os.getenv("STRIPE_SECRET_KEY", "")
     price_id = os.getenv("STRIPE_PRICE_ID", "")
-
-    _diag = (
-        f"STRIPE_SECRET_KEY={'SET('+stripe_key[:8]+'...)' if stripe_key else 'MISSING'} | "
-        f"STRIPE_PRICE_ID={'SET('+price_id+')' if price_id else 'MISSING'}"
-    )
-    log.info("billing_checkout diagnostics: %s", _diag)
-
     if not stripe_key or not price_id:
-        return HTMLResponse(f"""<!DOCTYPE html>
-<html lang="en"><head><meta charset="utf-8"><title>Config Error — FundScan</title>
-<style>body{{background:#0A1424;color:#EEF1F6;font-family:system-ui,sans-serif;
-  display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}}
-.box{{max-width:520px;padding:2.5rem;border:1px solid rgba(201,165,81,.4);border-radius:8px;background:#0F1B30}}
-p{{color:#A7B2C4;margin:.75rem 0;font-size:.95rem}}a{{color:#C9A551;text-decoration:none}}
-code{{font-size:.8rem;color:#C9A551}}</style></head>
-<body><div class="box">
-<h1 style="font-size:1.2rem;margin-bottom:.5rem">Stripe not configured</h1>
-<p>Missing env vars. Check Railway Variables.</p>
-<code>{_diag}</code>
-<p style="margin-top:1.5rem"><a href="/">← Back to home</a></p>
-</div></body></html>""")
+        raise HTTPException(500, "Stripe not configured")
 
+    import traceback
     try:
-        url = checkout_url(user["email"])
-        return RedirectResponse(url, status_code=302)
+        from .billing import create_embedded_session
+        client_secret = create_embedded_session(user["email"])
+        return {"clientSecret": client_secret}
     except Exception as e:
-        tb = traceback.format_exc()
-        log.error("Stripe checkout failed for %s:\n%s", user["email"], tb)
-        err_html = f"""<!DOCTYPE html>
-<html lang="en"><head><meta charset="utf-8"><title>Checkout Error — FundScan</title>
-<style>body{{background:#0A1424;color:#EEF1F6;font-family:system-ui,sans-serif;margin:2rem}}
-pre{{background:#0F1B30;padding:1.5rem;border-radius:6px;font-size:.8rem;overflow:auto;color:#f87171}}
-a{{color:#C9A551}}</style></head>
+        log.error("Stripe create-session failed for %s:\n%s", user["email"], traceback.format_exc())
+        raise HTTPException(500, str(e))
+
+
+@app.get("/billing/return")
+def billing_return(request: Request, session_id: str = ""):
+    """Post-payment landing page after Stripe embedded checkout completes."""
+    user = _current_user(request)
+    name = user["email"].split("@")[0] if user else "there"
+    return HTMLResponse(f"""<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><title>Welcome to Pro — FundScan</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,600&family=Instrument+Sans:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{{--navy:#0A1424;--navy-2:#0F1B30;--ivory:#EEF1F6;--soft:#A7B2C4;--gold:#C9A551;--green:#3FBE8E;
+  --hairline:rgba(167,178,196,.13);--serif:'Source Serif 4',Georgia,serif;--sans:'Instrument Sans',system-ui,sans-serif}}
+*{{margin:0;padding:0;box-sizing:border-box}}
+body{{background:var(--navy);color:var(--ivory);font-family:var(--sans);min-height:100vh;
+  display:flex;align-items:center;justify-content:center;padding:2rem;-webkit-font-smoothing:antialiased}}
+.ambient{{position:fixed;inset:0;z-index:-1;pointer-events:none;
+  background:radial-gradient(900px 500px at 50% 50%,rgba(63,190,142,.07),transparent 60%)}}
+.card{{max-width:480px;width:100%;text-align:center;padding:3rem 2.5rem;
+  background:var(--navy-2);border:1px solid var(--hairline);border-radius:12px}}
+.check{{width:64px;height:64px;margin:0 auto 1.5rem;background:rgba(63,190,142,.12);
+  border-radius:50%;display:flex;align-items:center;justify-content:center}}
+h1{{font-family:var(--serif);font-size:2rem;font-weight:600;margin-bottom:.75rem}}
+h1 span{{color:var(--gold)}}
+p{{color:var(--soft);font-size:15px;line-height:1.7;margin-bottom:2rem}}
+.btn{{display:inline-block;padding:14px 32px;background:var(--gold);color:var(--navy);
+  font-weight:600;font-size:15px;text-decoration:none;border-radius:4px;transition:opacity .2s}}
+.btn:hover{{opacity:.88}}
+</style></head>
 <body>
-<h2>Stripe checkout error</h2>
-<pre>{type(e).__name__}: {e}</pre>
-<pre>{tb}</pre>
-<p><a href="/">← Home</a></p>
-</body></html>"""
-        return HTMLResponse(err_html, status_code=500)
+<div class="ambient"></div>
+<div class="card">
+  <div class="check">
+    <svg width="28" height="28" viewBox="0 0 28 28" fill="none"><path d="M6 14l5.5 5.5L22 9" stroke="#3FBE8E" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  </div>
+  <h1>Welcome to <span>Pro</span></h1>
+  <p>You're all set, {name}. Your account has been upgraded — all pairs, live alerts, and CSV export are now unlocked.</p>
+  <a href="/app" class="btn">Go to dashboard →</a>
+</div>
+<script>
+  // Poll for tier upgrade (webhook may take a few seconds)
+  let attempts = 0;
+  const check = setInterval(async () => {{
+    if (++attempts > 12) return clearInterval(check);
+    try {{
+      const r = await fetch('/api/me');
+      if (r.ok) {{
+        const d = await r.json();
+        if (d.tier === 'pro') clearInterval(check);
+      }}
+    }} catch{{}}
+  }}, 2500);
+</script>
+</body></html>""")
 
 
 @app.post("/billing/webhook")
