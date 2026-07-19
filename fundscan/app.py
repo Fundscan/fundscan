@@ -943,9 +943,9 @@ ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "bilguun@fundscan.uk")
 def admin(request: Request):
     user = _current_user(request)
     if not user:
-        return RedirectResponse("/auth/request?next=/admin", status_code=302)
+        return RedirectResponse("/auth/request", status_code=302)
     if user["email"] != ADMIN_EMAIL:
-        raise HTTPException(403, f"Forbidden — logged in as {user['email']}, expected {ADMIN_EMAIL}")
+        raise HTTPException(403, "Forbidden")
 
     with get_conn() as conn:
         total_users = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
