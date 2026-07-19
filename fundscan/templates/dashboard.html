@@ -189,8 +189,10 @@ tr.chart-row td{padding:.5rem 1rem 1.25rem;background:rgba(15,27,48,.4);border-b
 @media(max-width:780px){
   nav,.toolbar,.stats-row,.container,.tier-banner,.board-switch{padding-left:18px;padding-right:18px}
   .stats-row{grid-template-columns:repeat(2,1fr)}
-  td:nth-child(3),th:nth-child(3){display:none}
-  .spark-cell,thead th:nth-child(8),tbody td:nth-child(8){display:none}
+  /* Scoped to #board-single: the spread board's own table has different
+     columns and must not lose "Long venue" to this same nth-child index. */
+  #board-single td:nth-child(3),#board-single th:nth-child(3){display:none}
+  .spark-cell,#board-single thead th:nth-child(8),#board-single tbody td:nth-child(8){display:none}
   .sort-select{margin-left:0}
 }
 </style>
