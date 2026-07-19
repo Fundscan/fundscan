@@ -671,7 +671,7 @@ def billing_checkout(request: Request):
     if user.get("tier") == "pro":
         return RedirectResponse("/account", status_code=302)
     pk = os.getenv("STRIPE_PUBLISHABLE_KEY", "")
-    return templates.TemplateResponse("checkout.html", {"request": request, "publishable_key": pk})
+    return templates.TemplateResponse(request, "checkout.html", {"publishable_key": pk})
 
 
 @app.post("/api/billing/create-session")
