@@ -167,6 +167,8 @@ tbody tr.greyed td{opacity:.55}
 tr.chart-row td{padding:.5rem 1rem 1.25rem;background:rgba(15,27,48,.4);border-bottom:1px solid var(--hairline)}
 .chart-inner{background:linear-gradient(180deg,var(--navy-2),rgba(15,27,48,.5));
              border:1px solid var(--hairline);border-radius:6px;padding:1rem 1rem .5rem}
+.accuracy-line{font-family:var(--mono);font-size:11px;letter-spacing:.02em;color:var(--soft);
+               margin-bottom:.75rem}
 .note{font-family:var(--mono);font-size:11px;color:var(--mist);margin-top:1.25rem;
       line-height:1.85;letter-spacing:.02em}
 
@@ -423,6 +425,7 @@ async function toggleChart(row) {
   const res = await fetch(`/history/${symbol}?days=7`);
   const data = await res.json();
   const pts = data.points.filter(p => p.exchange === exchange);
+  renderAccuracyLine(symbol, exchange, data);
   const canvas = document.getElementById(`canvas-${symbol}-${exchange}`);
   activeCharts[chartRowId] = new Chart(canvas, {
     type:'line',
@@ -437,6 +440,24 @@ async function toggleChart(row) {
       }
     }
   });
+}
+
+function renderAccuracyLine(symbol, exchange, data) {
+  const el = document.getElementById(`accuracy-${symbol}-${exchange}`);
+  if (!el) return;
+  const acc = data.accuracy && data.accuracy[exchange];
+  if (!acc) {
+    el.innerHTML = '<span style="color:var(--mist)">Not enough history yet for a realized-accuracy comparison.</span>';
+    return;
+  }
+  const gapPos = acc.gap >= 0;
+  const gapColor = gapPos ? 'var(--green)' : 'var(--red)';
+  const gapSign = gapPos ? '+' : '';
+  el.innerHTML =
+    `<span style="color:var(--mist)">Realized avg net APY (${data.days}d, ${acc.samples} samples):</span> ` +
+    `<b>${(acc.realized_avg_net_apy*100).toFixed(2)}%</b> ` +
+    `<span style="color:var(--mist)">vs current</span> <b>${(acc.current_net_apy*100).toFixed(2)}%</b> ` +
+    `<b style="color:${gapColor}">(${gapSign}${(acc.gap*100).toFixed(2)}pp)</b>`;
 }
 
 // ── Filter / search / sort ───────────────────────────────────────────────────

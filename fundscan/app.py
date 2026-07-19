@@ -24,6 +24,7 @@ from fastapi.templating import Jinja2Templates
 from . import math as fm
 from . import sizing
 from . import pairing
+from .backtest import realized_accuracy
 from .db import init_db, insert_snapshots, query_delayed, query_history, query_latest, query_sparklines, get_watchlist, toggle_watchlist
 from .scanner import scan
 from .alerts import (check_and_send_alerts, check_anomalies, send_daily_digest,
@@ -157,8 +158,18 @@ def rate_detail(request: Request, symbol: str):
 
 @app.get("/history/{symbol}")
 def history(symbol: str, days: int = 7):
+    """
+    `accuracy` compares each exchange's current (most recent) headline net
+    APY against its realized average over the window -- see backtest.py.
+    Absent from the dict for an exchange with no history yet.
+    """
     symbol = symbol.upper()
     rows = query_history(symbol, days)
+    accuracy = {}
+    for exch in sorted({r["exchange"] for r in rows}):
+        acc = realized_accuracy([r for r in rows if r["exchange"] == exch])
+        if acc:
+            accuracy[exch] = acc
     return {
         "symbol": symbol,
         "days": days,
@@ -167,6 +178,7 @@ def history(symbol: str, days: int = 7):
              "rate_8h": r["rate_8h"], "net_apy": r["net_apy"]}
             for r in rows
         ],
+        "accuracy": accuracy,
     }
 
 
@@ -468,7 +480,10 @@ def _render_table_rows(results: list[dict], locked: list[dict] | None = None) ->
             f'</tr>'
             f'<tr class="chart-row" id="chart-{r["symbol"]}-{r["exchange"]}" style="display:none">'
             f'<td colspan="8">'
-            f'<div class="chart-inner"><canvas id="canvas-{r["symbol"]}-{r["exchange"]}" height="90"></canvas></div>'
+            f'<div class="chart-inner">'
+            f'<div class="accuracy-line" id="accuracy-{r["symbol"]}-{r["exchange"]}"></div>'
+            f'<canvas id="canvas-{r["symbol"]}-{r["exchange"]}" height="90"></canvas>'
+            f'</div>'
             f'</td>'
             f'</tr>'
         )
