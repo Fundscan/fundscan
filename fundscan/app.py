@@ -936,7 +936,7 @@ def update_alert_threshold(request: Request, min_net_apy: int = 50):
 # Admin page
 # ---------------------------------------------------------------------------
 
-ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "boursierbilguun207@gmail.com")
+ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "bilguun@fundscan.uk")
 
 
 @app.get("/admin", response_class=HTMLResponse)
