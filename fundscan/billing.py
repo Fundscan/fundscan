@@ -74,7 +74,7 @@ def create_embedded_session(email: str) -> str:
     base = os.getenv('BASE_URL', 'http://localhost:8000')
     session = stripe.checkout.Session.create(
         mode="subscription",
-        ui_mode="embedded",
+        ui_mode="embedded_page",
         customer_email=email,
         client_reference_id=email,
         line_items=[{"price": STRIPE_PRICE_ID, "quantity": 1}],
