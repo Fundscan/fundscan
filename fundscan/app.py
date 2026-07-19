@@ -23,6 +23,7 @@ from fastapi.templating import Jinja2Templates
 
 from . import math as fm
 from . import sizing
+from . import pairing
 from .db import init_db, insert_snapshots, query_delayed, query_history, query_latest, query_sparklines, get_watchlist, toggle_watchlist
 from .scanner import scan
 from .alerts import (check_and_send_alerts, check_anomalies, send_daily_digest,
@@ -501,6 +502,40 @@ def _render_table_rows(results: list[dict], locked: list[dict] | None = None) ->
             f'</td></tr>'
         )
 
+    return "\n".join(rows)
+
+
+def _render_pair_rows(pairs: list[dict]) -> str:
+    """Cross-exchange spread board rows: same asset, short the richer venue,
+    long the cheaper one. Rendered by /htmx/pairs."""
+    if not pairs:
+        return (
+            '<tr class="data-row"><td colspan="6" '
+            'style="text-align:center;color:var(--mist);font-family:var(--mono);'
+            'font-size:12px;letter-spacing:.06em;padding:2rem 1rem">'
+            'No cross-exchange spreads yet…</td></tr>'
+        )
+
+    rows = []
+    for p in pairs:
+        net_at_size = p["net_apy_at_size"]
+        profitable = net_at_size > 0
+        row_cls = "data-row" if profitable else "data-row greyed"
+        net_cls = "num pos" if profitable else "num neg"
+        gross_label = _pct(p["gross_apy"])
+        net_label = _pct(net_at_size)
+        short_ex, long_ex = p["short_exchange"], p["long_exchange"]
+        rows.append(
+            f'<tr class="{row_cls}">'
+            f'<td><span class="sym-name">{p["asset"]}</span></td>'
+            f'<td><span class="exch-badge exch-{short_ex}">SHORT {short_ex.upper()}</span></td>'
+            f'<td><span class="exch-badge exch-{long_ex}">LONG {long_ex.upper()}</span></td>'
+            f'<td><span class="num">{_pct(p["spread_rate_8h"])}</span></td>'
+            f'<td><span class="gross-strike">{gross_label}</span>'
+            f'<span class="{net_cls}" style="font-weight:600">{net_label}</span></td>'
+            f'<td>{_liquidity_badge(p)}</td>'
+            f'</tr>'
+        )
     return "\n".join(rows)
 
 
@@ -1141,6 +1176,22 @@ def htmx_rows(request: Request, size: int = sizing.DEFAULT_POSITION_SIZE):
     visible, locked = _tier_results(user)
     visible = sizing.rank_by_size(visible, size)
     return _render_table_rows(visible, locked)
+
+
+@app.get("/htmx/pairs", response_class=HTMLResponse)
+def htmx_pairs(request: Request, size: int = sizing.DEFAULT_POSITION_SIZE):
+    """
+    Cross-exchange funding spread board: pairs the same asset's perp across
+    two exchanges (short the richer venue, long the cheaper one) and ranks
+    by net yield of that spread at the given position size. Built only from
+    pairs a user's tier can already see on the main board.
+    """
+    if size not in sizing.POSITION_SIZES:
+        size = sizing.DEFAULT_POSITION_SIZE
+    user = _current_user(request)
+    visible, _locked = _tier_results(user)
+    pairs = pairing.rank_pairs_by_size(visible, size)
+    return _render_pair_rows(pairs)
 
 
 @app.get("/htmx/summary", response_class=HTMLResponse)
