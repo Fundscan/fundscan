@@ -1244,6 +1244,10 @@ def htmx_rows(request: Request, size: int = sizing.DEFAULT_POSITION_SIZE):
     user = _current_user(request)
     visible, locked = _tier_results(user)
     visible = sizing.rank_by_size(visible, size)
+    # Locked/blurred preview rows must be sized too -- otherwise they lack
+    # liquidity_flag entirely and _liquidity_badge() falls back to "red",
+    # showing every Pro-only teaser as illiquid regardless of reality.
+    locked = sizing.rank_by_size(locked, size)
     return _render_table_rows(visible, locked)
 
 

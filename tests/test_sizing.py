@@ -80,6 +80,19 @@ def test_side_slippage_zero_notional_is_free():
     assert _side_slippage_pct(DEEP_BOOK["asks"], 0.0) == 0.0
 
 
+def test_side_slippage_zero_price_top_level_does_not_crash():
+    # A degenerate/glitch quote (some exchanges occasionally return a
+    # zero-price level) must not crash the best_price division -- the
+    # zero-price level should simply be skipped in favor of the next
+    # valid one.
+    levels = [[0.0, 100], [1.0, 100]]
+    assert _side_slippage_pct(levels, 50.0) == pytest.approx(0.0)
+
+
+def test_side_slippage_all_zero_price_levels_is_total():
+    assert _side_slippage_pct([[0.0, 100], [0.0, 50]], 1000.0) == 1.0
+
+
 def test_side_slippage_deep_book_negligible_at_small_size():
     # $1,000 barely dents a book with $5M+ per level
     pct = _side_slippage_pct(DEEP_BOOK["asks"], 1000.0)

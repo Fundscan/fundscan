@@ -64,15 +64,17 @@ def _side_slippage_pct(levels: list[list[float]], notional: float) -> float:
     """
     if notional <= 0:
         return 0.0
-    if not levels:
-        return 1.0  # no quotes at all — nothing can be filled
 
-    best_price = levels[0][0]
-    total_depth = sum(price * qty for price, qty in levels if price > 0 and qty > 0)
+    valid_levels = [(price, qty) for price, qty in levels if price > 0 and qty > 0]
+    if not valid_levels:
+        return 1.0  # no usable quotes at all — nothing can be filled
+
+    best_price = valid_levels[0][0]
+    total_depth = sum(price * qty for price, qty in valid_levels)
     if total_depth <= 0:
         return 1.0
 
-    notional_filled, units_filled = _walk_book(levels, notional)
+    notional_filled, units_filled = _walk_book(valid_levels, notional)
     filled_slippage = (
         abs(notional_filled / units_filled - best_price) / best_price
         if units_filled > 0 else 0.0
