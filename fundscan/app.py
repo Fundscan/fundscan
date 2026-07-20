@@ -18,7 +18,7 @@ import io
 import traceback
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse, StreamingResponse, Response
 from fastapi.templating import Jinja2Templates
 
 from . import math as fm
@@ -117,23 +117,76 @@ def health():
     }
 
 
-@app.get("/rates")
-def rates(request: Request):
+SITE_URL = "https://fundscan.uk"
+
+
+@app.get("/rates", response_class=HTMLResponse)
+def public_rates(request: Request):
     """
-    Opportunities ranked by net APY descending.
-    Pro: full live list. Free/anonymous: top 5, delayed 10 min.
-    net_apy and gross_apy are decimals (0.15 = 15%).
+    Public, unauthenticated, SEO-indexable rates page. Fully server-rendered
+    (no HTMX needed for initial content) so search engines see the actual
+    opportunities table, not a loading skeleton.
+
+    Unlike the gated dashboard, this shows the complete current list from
+    _state["results"] with no tier limiting -- the point of a public page
+    is maximum crawlable content and a path into the funnel via /auth/request.
     """
-    user = _current_user(request)
-    results, locked = _tier_results(user)
-    tier = user["tier"] if user else "anonymous"
-    return {
-        "tier": tier,
-        "fetched_at": _state["last_fetch_at"],
-        "count": len(results),
-        "missing": len(locked),
-        "opportunities": results,
-    }
+    results = _state["results"]
+    profitable = [r for r in results if r["is_profitable"]]
+    below_cost = [r for r in results if not r["is_profitable"]]
+    return templates.TemplateResponse(
+        request,
+        "rates.html",
+        {
+            "profitable": profitable,
+            "below_cost": below_cost,
+            "pairs_count": len(results),
+            "fetched_at": _state["last_fetch_at"],
+            "site_url": SITE_URL,
+            "fee_per_leg_pct": fm.FEE_PER_LEG * 100,
+            "legs": fm.LEGS,
+            "slippage_pct": fm.SLIPPAGE * 100,
+            "total_round_trip_pct": fm.TOTAL_ROUND_TRIP_COST * 100,
+        },
+    )
+
+
+@app.get("/sitemap.xml")
+def sitemap():
+    urls = [
+        (f"{SITE_URL}/", "daily", "1.0"),
+        (f"{SITE_URL}/rates", "hourly", "0.9"),
+    ]
+    body = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+        + "".join(
+            f"  <url><loc>{loc}</loc><changefreq>{freq}</changefreq>"
+            f"<priority>{prio}</priority></url>\n"
+            for loc, freq, prio in urls
+        )
+        + "</urlset>"
+    )
+    return Response(content=body, media_type="application/xml")
+
+
+@app.get("/robots.txt")
+def robots_txt():
+    body = (
+        "User-agent: *\n"
+        "Allow: /\n"
+        "Allow: /rates\n"
+        "Disallow: /app\n"
+        "Disallow: /account\n"
+        "Disallow: /admin\n"
+        "Disallow: /billing\n"
+        "Disallow: /api/\n"
+        "Disallow: /htmx/\n"
+        "Disallow: /auth/verify\n"
+        "\n"
+        f"Sitemap: {SITE_URL}/sitemap.xml\n"
+    )
+    return PlainTextResponse(content=body)
 
 
 @app.get("/rates/{symbol}")

@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Live Crypto Funding Rates — Net of Fees | FundScan</title>
+<meta name="description" content="Live funding rates across Bybit, Binance, OKX and Hyperliquid, ranked by net annualised yield after execution costs and slippage. Updated every 60 seconds — no API keys required.">
+<link rel="canonical" href="{{ site_url }}/rates">
+
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="FundScan">
+<meta property="og:title" content="Live Crypto Funding Rates — Net of Fees | FundScan">
+<meta property="og:description" content="Every perpetual funding rate across major exchanges, ranked by net annualised yield after execution costs — not the gross figure everyone else publishes.">
+<meta property="og:url" content="{{ site_url }}/rates">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="Live Crypto Funding Rates — Net of Fees | FundScan">
+<meta name="twitter:description" content="Every perpetual funding rate across major exchanges, ranked by net annualised yield after execution costs.">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,500;0,8..60,600;1,8..60,400&family=Instrument+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --navy:#0A1424; --navy-2:#0F1B30; --navy-3:#16233C;
+  --ivory:#EEF1F6; --soft:#A7B2C4; --mist:#67748A;
+  --hairline:rgba(167,178,196,.13); --hairline-2:rgba(167,178,196,.24);
+  --gold:#C9A551; --gold-dim:#8A7238; --green:#3FBE8E; --red:#D96A6A;
+  --serif:'Source Serif 4',Georgia,serif;
+  --sans:'Instrument Sans',system-ui,sans-serif;
+  --mono:'IBM Plex Mono',ui-monospace,monospace;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--navy);color:var(--ivory);font-family:var(--sans);font-size:16px;
+     line-height:1.6;-webkit-font-smoothing:antialiased;overflow-x:hidden}
+a{color:inherit}
+::selection{background:var(--gold);color:var(--navy)}
+
+.ambient{position:fixed;inset:0;z-index:-2;pointer-events:none;
+  background:radial-gradient(900px 500px at 15% -5%,rgba(201,165,81,.055),transparent 60%),
+    radial-gradient(1100px 600px at 90% 15%,rgba(63,190,142,.04),transparent 60%)}
+.grid-bg{position:fixed;inset:0;z-index:-1;pointer-events:none;opacity:.28;
+  background-image:linear-gradient(rgba(167,178,196,.045) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(167,178,196,.045) 1px,transparent 1px);
+  background-size:56px 56px;
+  mask-image:radial-gradient(1200px 800px at 50% 0%,black 30%,transparent 85%)}
+
+nav{position:sticky;top:0;z-index:50;display:flex;align-items:center;justify-content:space-between;
+    padding:16px 32px;background:rgba(10,20,36,.82);backdrop-filter:blur(18px);
+    border-bottom:1px solid var(--hairline);gap:1rem;flex-wrap:wrap}
+.logo{display:flex;align-items:center;gap:10px;text-decoration:none}
+.logo-mark{width:28px;height:28px;flex-shrink:0}
+.logo-word{font-family:var(--serif);font-weight:600;font-size:19px;letter-spacing:-.01em}
+.logo-word i{font-style:normal;color:var(--gold)}
+.btn{display:inline-block;font-family:var(--sans);font-weight:600;font-size:14px;text-decoration:none;
+     padding:10px 22px;border-radius:4px;background:var(--gold);color:#221A08;transition:background .2s}
+.btn:hover{background:#D9B65F}
+
+main{max-width:1080px;margin:0 auto;padding:56px 32px 40px}
+.kicker{font-family:var(--mono);font-size:12px;letter-spacing:.2em;text-transform:uppercase;color:var(--gold);margin-bottom:20px}
+h1{font-family:var(--serif);font-size:clamp(30px,4.4vw,48px);line-height:1.15;letter-spacing:-.01em;font-weight:500;margin-bottom:20px;max-width:820px}
+.lede{color:var(--soft);font-size:17px;max-width:720px;line-height:1.75;margin-bottom:8px}
+.meta-line{font-family:var(--mono);font-size:12px;color:var(--mist);margin:20px 0 36px;letter-spacing:.03em}
+.meta-line b{color:var(--soft)}
+
+.section-head{display:flex;align-items:baseline;justify-content:space-between;gap:1rem;margin:44px 0 14px;flex-wrap:wrap}
+.section-head h2{font-family:var(--serif);font-size:22px;font-weight:600}
+.section-head span{font-family:var(--mono);font-size:11.5px;color:var(--mist);letter-spacing:.05em}
+
+.table-wrap{overflow-x:auto;border:1px solid var(--hairline);border-radius:8px;
+  background:linear-gradient(180deg,var(--navy-2),rgba(15,27,48,.5))}
+table{width:100%;border-collapse:collapse}
+thead th{font-family:var(--mono);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;
+         color:var(--mist);padding:.85rem 1rem;border-bottom:1px solid var(--hairline);text-align:left;white-space:nowrap}
+tbody tr{border-bottom:1px solid rgba(167,178,196,.07)}
+tbody tr:last-child{border-bottom:none}
+tbody td{padding:.75rem 1rem;font-size:14px}
+.sym-name{font-family:var(--sans);font-weight:600;color:var(--ivory)}
+.exch-badge{display:inline-block;font-family:var(--mono);font-size:10px;letter-spacing:.08em;
+           text-transform:uppercase;padding:2px 7px;border-radius:3px;
+           background:rgba(167,178,196,.07);border:1px solid var(--hairline);color:var(--soft)}
+.num{font-family:var(--mono);font-size:13.5px}
+.num.pos{color:var(--green)}
+.num.neg{color:var(--red)}
+.below-cost tbody tr td{color:var(--mist)}
+.below-cost .sym-name{color:var(--soft)}
+.empty-row td{text-align:center;color:var(--mist);font-family:var(--mono);font-size:12px;padding:2rem 1rem}
+
+.fee-note{font-family:var(--mono);font-size:12px;color:var(--mist);line-height:1.85;margin-top:20px;letter-spacing:.02em;max-width:820px}
+
+.cta-band{margin:56px 0;padding:36px 32px;border:1px solid rgba(201,165,81,.3);border-radius:8px;
+  background:linear-gradient(160deg,rgba(201,165,81,.07),transparent);text-align:center}
+.cta-band h2{font-family:var(--serif);font-size:24px;font-weight:600;margin-bottom:10px}
+.cta-band p{color:var(--soft);margin-bottom:22px}
+
+footer{border-top:1px solid var(--hairline);padding:32px;color:var(--mist);font-size:12.5px;line-height:1.75;max-width:1080px;margin:0 auto}
+footer a{color:var(--gold);text-decoration:none}
+
+@media(max-width:700px){
+  nav,main,footer{padding-left:18px;padding-right:18px}
+  td:nth-child(2),th:nth-child(2){display:none}
+}
+</style>
+</head>
+<body>
+<div class="ambient" aria-hidden="true"></div>
+<div class="grid-bg" aria-hidden="true"></div>
+
+<nav>
+  <a class="logo" href="/" aria-label="FundScan home">
+    <svg class="logo-mark" viewBox="0 0 34 34" aria-hidden="true">
+      <circle cx="17" cy="17" r="15.5" fill="none" stroke="#C9A551" stroke-width="1.6"/>
+      <path d="M10 21 L15 16 L19 19 L24 12" fill="none" stroke="#3FBE8E" stroke-width="2.2" stroke-linecap="round"/>
+      <circle cx="24" cy="12" r="2" fill="#3FBE8E"/>
+    </svg>
+    <span class="logo-word">FundScan<i>.</i></span>
+  </a>
+  <a href="/auth/request" class="btn">Get alerts — free</a>
+</nav>
+
+<main>
+  <div class="kicker">Funding rate arbitrage · Bybit — Binance — OKX — Hyperliquid</div>
+  <h1>Live crypto funding rates, ranked by what actually remains after costs.</h1>
+  <p class="lede">
+    Most rate pages publish the gross funding number. FundScan tracks every perpetual pair across four
+    major venues and ranks each one by <strong>net annualised yield</strong> — after the round-trip
+    execution cost of opening and closing a delta-neutral position. The complete current list is below:
+    pairs that clear their own costs first, instruments that don't shown separately.
+  </p>
+  <p class="meta-line">
+    <b>{{ pairs_count }}</b> pairs tracked · refreshed every 60s
+    {% if fetched_at %}· last updated <b>{{ fetched_at[:19].replace("T", " ") }} UTC</b>{% endif %}
+  </p>
+
+  <div class="section-head">
+    <h2>Profitable after fees</h2>
+    <span>{{ profitable|length }} pair{{ 's' if profitable|length != 1 else '' }}</span>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Instrument</th>
+          <th>Exchange</th>
+          <th>Rate / 8h</th>
+          <th>Net APY</th>
+          <th>Breakeven</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in profitable %}
+        <tr>
+          <td><span class="sym-name">{{ r.symbol }}</span></td>
+          <td><span class="exch-badge">{{ r.exchange.upper() }}</span></td>
+          <td><span class="num">{{ "%.4f"|format(r.rate_8h * 100) }}%</span></td>
+          <td><span class="num pos" style="font-weight:600">{{ "%.2f"|format(r.net_apy * 100) }}%</span></td>
+          <td><span class="num">{{ "%.1f"|format(r.breakeven_cycles) if r.breakeven_cycles is not none else "—" }} cycles</span></td>
+        </tr>
+        {% else %}
+        <tr class="empty-row"><td colspan="5">Fetching live data — check back shortly.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="section-head">
+    <h2>Below cost</h2>
+    <span>{{ below_cost|length }} pair{{ 's' if below_cost|length != 1 else '' }}</span>
+  </div>
+  <div class="table-wrap below-cost">
+    <table>
+      <thead>
+        <tr>
+          <th>Instrument</th>
+          <th>Exchange</th>
+          <th>Rate / 8h</th>
+          <th>Net APY</th>
+          <th>Breakeven</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in below_cost %}
+        <tr>
+          <td><span class="sym-name">{{ r.symbol }}</span></td>
+          <td><span class="exch-badge">{{ r.exchange.upper() }}</span></td>
+          <td><span class="num">{{ "%.4f"|format(r.rate_8h * 100) }}%</span></td>
+          <td><span class="num neg">{{ "%.2f"|format(r.net_apy * 100) }}%</span></td>
+          <td><span class="num">—</span></td>
+        </tr>
+        {% else %}
+        <tr class="empty-row"><td colspan="5">No pairs currently below cost.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <p class="fee-note">
+    Net APY = gross annualised funding rate − {{ "%.2f"|format(total_round_trip_pct) }}% round-trip
+    execution cost ({{ legs }} legs × {{ "%.2f"|format(fee_per_leg_pct) }}% taker fee
+    + {{ "%.2f"|format(slippage_pct) }}% slippage provision). Breakeven cycles is the number of
+    8-hour funding settlements required to recover that cost. Figures are estimates derived from
+    public exchange data and a standardised cost model — not a projection of future returns.
+  </p>
+
+  <div class="cta-band">
+    <h2>Get notified when a pair crosses your threshold.</h2>
+    <p>Free tier, no API keys, no card required. Define a net-yield threshold and get a Telegram alert the moment it's crossed.</p>
+    <a href="/auth/request" class="btn">Start free →</a>
+  </div>
+</main>
+
+<footer>
+  FundScan is a market-data and analytics service. It does not execute transactions, hold client
+  assets, or provide investment advice. Figures above are estimates derived from public exchange
+  data and a standardised cost model; realised results depend on venue fee tiers, execution
+  quality, and market conditions. Funding rates can invert and executions can slip — no return is
+  assured. Cryptoasset trading involves substantial risk. ·
+  <a href="/">Home</a> · <a href="/auth/request">Sign up</a>
+</footer>
+</body>
+</html>
