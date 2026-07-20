@@ -9,6 +9,17 @@ the cheaper one — which is delta-neutral without holding spot at all.
 Extends math.py (annualised_gross, net_apy, round_trip_fee_cost,
 net_apy_at_size) and sizing.py (entry_exit_slippage_pct,
 liquidity_pct_of_volume, liquidity_flag) rather than duplicating either.
+
+Scope note: all four venues only ever contribute linear, USDT/USDC-margined
+perpetuals (Bybit queries category=linear, Binance's /fapi/v1 is USD-M,
+OKX is filtered to -USDT-SWAP, Hyperliquid has no inverse contracts at
+all), so a pair can never accidentally cross a linear and an inverse
+contract. Funding rate is a percentage of notional, so a contract's
+multiplier (e.g. Binance's "1000PEPE" vs OKX's plain "PEPE") doesn't
+affect the spread math either. The one real simplification: Hyperliquid
+settles in USDC while the other three settle in USDT, treated as
+equivalent here -- executing a spread against Hyperliquid in practice
+means holding both a USDT and a USDC margin balance.
 """
 from itertools import combinations
 
