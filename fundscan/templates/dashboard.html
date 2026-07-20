@@ -80,6 +80,9 @@ nav{position:sticky;top:0;z-index:50;display:flex;align-items:center;justify-con
 .stat-card .l{font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;
               color:var(--mist);margin-top:6px}
 
+/* board switch */
+.board-switch{display:flex;align-items:center;gap:10px;padding:14px 32px 0;flex-wrap:wrap}
+
 /* toolbar */
 .toolbar{display:flex;align-items:center;gap:10px;padding:12px 32px;
          border-bottom:1px solid var(--hairline);flex-wrap:wrap}
@@ -135,6 +138,15 @@ tbody tr.greyed td{opacity:.55}
                 color:var(--gold);text-decoration:none;transition:all .25s;background:rgba(201,165,81,.06)}
 .pro-unlock-btn:hover{background:rgba(201,165,81,.14);border-color:var(--gold)}
 
+.gross-strike{font-family:var(--mono);font-size:11px;color:var(--mist);text-decoration:line-through;
+             margin-right:7px;white-space:nowrap}
+.liq-badge{display:inline-block;font-family:var(--mono);font-size:9.5px;letter-spacing:.08em;
+           text-transform:uppercase;padding:2px 7px;border-radius:3px;border:1px solid;white-space:nowrap}
+.liq-green{color:var(--green);border-color:rgba(63,190,142,.35);background:rgba(63,190,142,.08)}
+.liq-amber{color:var(--gold);border-color:rgba(201,165,81,.35);background:rgba(201,165,81,.08)}
+.liq-red{color:var(--red);border-color:rgba(217,106,106,.35);background:rgba(217,106,106,.08)}
+.size-label{font-family:var(--mono);font-size:11px;letter-spacing:.06em;color:var(--mist);
+            text-transform:uppercase;margin-right:2px}
 .sym-name{font-family:var(--sans);font-weight:600;font-size:13.5px;color:var(--ivory)}
 .exch-badge{display:inline-block;font-family:var(--mono);font-size:10px;letter-spacing:.1em;
             text-transform:uppercase;padding:2px 7px;border-radius:3px;
@@ -155,6 +167,8 @@ tbody tr.greyed td{opacity:.55}
 tr.chart-row td{padding:.5rem 1rem 1.25rem;background:rgba(15,27,48,.4);border-bottom:1px solid var(--hairline)}
 .chart-inner{background:linear-gradient(180deg,var(--navy-2),rgba(15,27,48,.5));
              border:1px solid var(--hairline);border-radius:6px;padding:1rem 1rem .5rem}
+.accuracy-line{font-family:var(--mono);font-size:11px;letter-spacing:.02em;color:var(--soft);
+               margin-bottom:.75rem}
 .note{font-family:var(--mono);font-size:11px;color:var(--mist);margin-top:1.25rem;
       line-height:1.85;letter-spacing:.02em}
 
@@ -173,10 +187,12 @@ tr.chart-row td{padding:.5rem 1rem 1.25rem;background:rgba(15,27,48,.4);border-b
 .stat-l{font-family:var(--mono);font-size:10px;color:var(--mist);letter-spacing:.08em;text-transform:uppercase}
 
 @media(max-width:780px){
-  nav,.toolbar,.stats-row,.container,.tier-banner{padding-left:18px;padding-right:18px}
+  nav,.toolbar,.stats-row,.container,.tier-banner,.board-switch{padding-left:18px;padding-right:18px}
   .stats-row{grid-template-columns:repeat(2,1fr)}
-  td:nth-child(3),th:nth-child(3){display:none}
-  .spark-cell,thead th:nth-child(7),tbody td:nth-child(7){display:none}
+  /* Scoped to #board-single: the spread board's own table has different
+     columns and must not lose "Long venue" to this same nth-child index. */
+  #board-single td:nth-child(3),#board-single th:nth-child(3){display:none}
+  .spark-cell,#board-single thead th:nth-child(8),#board-single tbody td:nth-child(8){display:none}
   .sort-select{margin-left:0}
 }
 </style>
@@ -224,64 +240,123 @@ tr.chart-row td{padding:.5rem 1rem 1.25rem;background:rgba(15,27,48,.4);border-b
 </div>
 {% endif %}
 
-<!-- Toolbar -->
-<div class="toolbar">
-  <div class="search-wrap">
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-    <input type="text" id="search" placeholder="Search symbol…" oninput="filterRows()">
+<!-- Board switch + shared position size (applies to both boards) -->
+<div class="board-switch">
+  <div class="filter-tabs" id="board-tabs">
+    <button class="tab active" data-board="single" onclick="setBoard(this)">Funding Board</button>
+    <button class="tab" data-board="spread" onclick="setBoard(this)">Cross-Exchange Spreads</button>
   </div>
-  <div class="filter-tabs" id="exchange-tabs">
-    <button class="tab active" data-exchange="all" onclick="setExchange(this)">All</button>
-    {% for ex in exchanges %}
-    <button class="tab" data-exchange="{{ ex }}" onclick="setExchange(this)">{{ ex.upper() }}</button>
+  <span class="size-label" style="margin-left:auto">Size:</span>
+  <div class="filter-tabs" id="size-tabs">
+    {% for size in position_sizes %}
+    <button class="tab{% if size == default_position_size %} active{% endif %}"
+            data-size="{{ size }}" onclick="setPositionSize(this)">£{{ '{:,}'.format(size) }}</button>
     {% endfor %}
   </div>
-  <select class="sort-select" id="sort-select" onchange="sortRows()">
-    <option value="apy-desc">Net APY ↓</option>
-    <option value="apy-asc">Net APY ↑</option>
-    <option value="rate-desc">Rate/8h ↓</option>
-    <option value="sym-asc">Symbol A–Z</option>
-  </select>
 </div>
 
-<div class="container">
-  <table>
-    <thead>
-      <tr>
-        <th></th>
-        <th>Instrument</th>
-        <th>Exchange</th>
-        <th onclick="setSortCol('rate')" id="th-rate">Rate / 8h</th>
-        <th onclick="setSortCol('apy')" id="th-apy" class="sort-active">Net APY ▾</th>
-        <th>Breakeven</th>
-        <th>24h trend</th>
-      </tr>
-    </thead>
-    <tbody id="rates-body"
-           hx-get="/htmx/rows" hx-trigger="every 30s, load" hx-swap="innerHTML">
-      {% for _ in range(5) %}
-      <tr class="skeleton-row">
-        <td><span class="skel" style="width:16px"></span></td>
-        <td><span class="skel" style="width:90px"></span></td>
-        <td><span class="skel" style="width:58px"></span></td>
-        <td><span class="skel" style="width:52px"></span></td>
-        <td><span class="skel" style="width:68px"></span></td>
-        <td><span class="skel" style="width:80px"></span></td>
-        <td><span class="skel" style="width:80px;height:26px;border-radius:2px"></span></td>
-      </tr>
+<div id="board-single">
+  <!-- Toolbar -->
+  <div class="toolbar">
+    <div class="search-wrap">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+      <input type="text" id="search" placeholder="Search symbol…" oninput="filterRows()">
+    </div>
+    <div class="filter-tabs" id="exchange-tabs">
+      <button class="tab active" data-exchange="all" onclick="setExchange(this)">All</button>
+      {% for ex in exchanges %}
+      <button class="tab" data-exchange="{{ ex }}" onclick="setExchange(this)">{{ ex.upper() }}</button>
       {% endfor %}
-    </tbody>
-  </table>
-  <p class="note">
-    Net APY = gross annual yield − 1.09% round-trip fees (0.26% × 4 legs + 0.05% slippage).
-    Click any row for 7-day rate history. Rates refresh every 60 s.
-  </p>
+    </div>
+    <select class="sort-select" id="sort-select" onchange="sortRows()">
+      <option value="apy-desc">Net APY ↓</option>
+      <option value="apy-asc">Net APY ↑</option>
+      <option value="rate-desc">Rate/8h ↓</option>
+      <option value="sym-asc">Symbol A–Z</option>
+    </select>
+  </div>
+
+  <div class="container">
+    <table>
+      <thead>
+        <tr>
+          <th></th>
+          <th>Instrument</th>
+          <th>Exchange</th>
+          <th onclick="setSortCol('rate')" id="th-rate">Rate / 8h</th>
+          <th onclick="setSortCol('apy')" id="th-apy" class="sort-active">Net APY at size ▾</th>
+          <th>Liquidity</th>
+          <th>Breakeven</th>
+          <th>24h trend</th>
+        </tr>
+      </thead>
+      <tbody id="rates-body"
+             hx-get="/htmx/rows" hx-trigger="every 30s, load" hx-vals="js:{size: _positionSize}" hx-swap="innerHTML">
+        {% for _ in range(5) %}
+        <tr class="skeleton-row">
+          <td><span class="skel" style="width:16px"></span></td>
+          <td><span class="skel" style="width:90px"></span></td>
+          <td><span class="skel" style="width:58px"></span></td>
+          <td><span class="skel" style="width:52px"></span></td>
+          <td><span class="skel" style="width:68px"></span></td>
+          <td><span class="skel" style="width:56px"></span></td>
+          <td><span class="skel" style="width:80px"></span></td>
+          <td><span class="skel" style="width:80px;height:26px;border-radius:2px"></span></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <p class="note">
+      Net APY at size = gross annual yield − 1.04% round-trip fees (0.26% × 4 legs) − estimated
+      entry+exit slippage for your position size, walked against live order book depth.
+      Liquidity badge flags position size as % of 24h volume: <b style="color:var(--green)">green</b> ≤0.25%,
+      <b style="color:var(--gold)">amber</b> ≤1%, <b style="color:var(--red)">red</b> above 1%.
+      Click any row for 7-day rate history. Rates refresh every 60 s.
+    </p>
+  </div>
+</div>
+
+<div id="board-spread" style="display:none">
+  <div class="container">
+    <table>
+      <thead>
+        <tr>
+          <th>Asset</th>
+          <th>Short venue</th>
+          <th>Long venue</th>
+          <th>Spread / 8h</th>
+          <th>Net APY at size ▾</th>
+          <th>Liquidity</th>
+        </tr>
+      </thead>
+      <tbody id="pairs-body"
+             hx-get="/htmx/pairs" hx-trigger="every 30s, load" hx-vals="js:{size: _positionSize}" hx-swap="innerHTML">
+        {% for _ in range(5) %}
+        <tr class="skeleton-row">
+          <td><span class="skel" style="width:60px"></span></td>
+          <td><span class="skel" style="width:80px"></span></td>
+          <td><span class="skel" style="width:80px"></span></td>
+          <td><span class="skel" style="width:60px"></span></td>
+          <td><span class="skel" style="width:90px"></span></td>
+          <td><span class="skel" style="width:56px"></span></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <p class="note">
+      Pairs the same asset's perpetual across two exchanges: short the richer venue, long the
+      cheaper one, delta-neutral without holding spot. Net APY at size deducts round-trip fees on
+      both legs plus estimated slippage entering and exiting each venue's order book. Liquidity
+      reflects the thinner of the two legs.
+    </p>
+  </div>
 </div>
 
 <script>
 const activeCharts = {};
 let _sparklineData = {};
 let _activeExchange = 'all';
+let _positionSize = {{ default_position_size }};
 
 // ── Sparklines ──────────────────────────────────────────────────────────────
 async function loadSparklines() {
@@ -352,6 +427,7 @@ async function toggleChart(row) {
   const res = await fetch(`/history/${symbol}?days=7`);
   const data = await res.json();
   const pts = data.points.filter(p => p.exchange === exchange);
+  renderAccuracyLine(symbol, exchange, data);
   const canvas = document.getElementById(`canvas-${symbol}-${exchange}`);
   activeCharts[chartRowId] = new Chart(canvas, {
     type:'line',
@@ -368,12 +444,48 @@ async function toggleChart(row) {
   });
 }
 
+function renderAccuracyLine(symbol, exchange, data) {
+  const el = document.getElementById(`accuracy-${symbol}-${exchange}`);
+  if (!el) return;
+  const acc = data.accuracy && data.accuracy[exchange];
+  if (!acc) {
+    el.innerHTML = '<span style="color:var(--mist)">Not enough history yet for a realized-accuracy comparison.</span>';
+    return;
+  }
+  const gapPos = acc.gap >= 0;
+  const gapColor = gapPos ? 'var(--green)' : 'var(--red)';
+  const gapSign = gapPos ? '+' : '';
+  el.innerHTML =
+    `<span style="color:var(--mist)">Realized avg net APY (${data.days}d, ${acc.samples} samples):</span> ` +
+    `<b>${(acc.realized_avg_net_apy*100).toFixed(2)}%</b> ` +
+    `<span style="color:var(--mist)">vs current</span> <b>${(acc.current_net_apy*100).toFixed(2)}%</b> ` +
+    `<b style="color:${gapColor}">(${gapSign}${(acc.gap*100).toFixed(2)}pp)</b>`;
+}
+
 // ── Filter / search / sort ───────────────────────────────────────────────────
 function setExchange(btn) {
-  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+  document.querySelectorAll('#exchange-tabs .tab').forEach(t=>t.classList.remove('active'));
   btn.classList.add('active');
   _activeExchange = btn.dataset.exchange;
   filterRows();
+}
+
+// ── Position size — re-ranks both boards by net yield at that size ─────────
+function setPositionSize(btn) {
+  document.querySelectorAll('#size-tabs .tab').forEach(t=>t.classList.remove('active'));
+  btn.classList.add('active');
+  _positionSize = parseInt(btn.dataset.size, 10);
+  htmx.ajax('GET', `/htmx/rows?size=${_positionSize}`, {target: '#rates-body', swap: 'innerHTML'});
+  htmx.ajax('GET', `/htmx/pairs?size=${_positionSize}`, {target: '#pairs-body', swap: 'innerHTML'});
+}
+
+// ── Board switch — Funding Board vs. Cross-Exchange Spreads ────────────────
+function setBoard(btn) {
+  document.querySelectorAll('#board-tabs .tab').forEach(t=>t.classList.remove('active'));
+  btn.classList.add('active');
+  const board = btn.dataset.board;
+  document.getElementById('board-single').style.display = board === 'single' ? '' : 'none';
+  document.getElementById('board-spread').style.display = board === 'spread' ? '' : 'none';
 }
 
 function filterRows() {

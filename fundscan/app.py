@@ -18,10 +18,13 @@ import io
 import traceback
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse, StreamingResponse, Response
 from fastapi.templating import Jinja2Templates
 
 from . import math as fm
+from . import sizing
+from . import pairing
+from .backtest import realized_accuracy
 from .db import init_db, insert_snapshots, query_delayed, query_history, query_latest, query_sparklines, get_watchlist, toggle_watchlist, get_conn
 from .scanner import scan
 from .alerts import (check_and_send_alerts, check_anomalies, send_daily_digest,
@@ -114,23 +117,76 @@ def health():
     }
 
 
-@app.get("/rates")
-def rates(request: Request):
+SITE_URL = "https://fundscan.uk"
+
+
+@app.get("/rates", response_class=HTMLResponse)
+def public_rates(request: Request):
     """
-    Opportunities ranked by net APY descending.
-    Pro: full live list. Free/anonymous: top 5, delayed 10 min.
-    net_apy and gross_apy are decimals (0.15 = 15%).
+    Public, unauthenticated, SEO-indexable rates page. Fully server-rendered
+    (no HTMX needed for initial content) so search engines see the actual
+    opportunities table, not a loading skeleton.
+
+    Unlike the gated dashboard, this shows the complete current list from
+    _state["results"] with no tier limiting -- the point of a public page
+    is maximum crawlable content and a path into the funnel via /auth/request.
     """
-    user = _current_user(request)
-    results, locked = _tier_results(user)
-    tier = user["tier"] if user else "anonymous"
-    return {
-        "tier": tier,
-        "fetched_at": _state["last_fetch_at"],
-        "count": len(results),
-        "missing": len(locked),
-        "opportunities": results,
-    }
+    results = _state["results"]
+    profitable = [r for r in results if r["is_profitable"]]
+    below_cost = [r for r in results if not r["is_profitable"]]
+    return templates.TemplateResponse(
+        request,
+        "rates.html",
+        {
+            "profitable": profitable,
+            "below_cost": below_cost,
+            "pairs_count": len(results),
+            "fetched_at": _state["last_fetch_at"],
+            "site_url": SITE_URL,
+            "fee_per_leg_pct": fm.FEE_PER_LEG * 100,
+            "legs": fm.LEGS,
+            "slippage_pct": fm.SLIPPAGE * 100,
+            "total_round_trip_pct": fm.TOTAL_ROUND_TRIP_COST * 100,
+        },
+    )
+
+
+@app.get("/sitemap.xml")
+def sitemap():
+    urls = [
+        (f"{SITE_URL}/", "daily", "1.0"),
+        (f"{SITE_URL}/rates", "hourly", "0.9"),
+    ]
+    body = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+        + "".join(
+            f"  <url><loc>{loc}</loc><changefreq>{freq}</changefreq>"
+            f"<priority>{prio}</priority></url>\n"
+            for loc, freq, prio in urls
+        )
+        + "</urlset>"
+    )
+    return Response(content=body, media_type="application/xml")
+
+
+@app.get("/robots.txt")
+def robots_txt():
+    body = (
+        "User-agent: *\n"
+        "Allow: /\n"
+        "Allow: /rates\n"
+        "Disallow: /app\n"
+        "Disallow: /account\n"
+        "Disallow: /admin\n"
+        "Disallow: /billing\n"
+        "Disallow: /api/\n"
+        "Disallow: /htmx/\n"
+        "Disallow: /auth/verify\n"
+        "\n"
+        f"Sitemap: {SITE_URL}/sitemap.xml\n"
+    )
+    return PlainTextResponse(content=body)
 
 
 @app.get("/rates/{symbol}")
@@ -155,8 +211,18 @@ def rate_detail(request: Request, symbol: str):
 
 @app.get("/history/{symbol}")
 def history(symbol: str, days: int = 7):
+    """
+    `accuracy` compares each exchange's current (most recent) headline net
+    APY against its realized average over the window -- see backtest.py.
+    Absent from the dict for an exchange with no history yet.
+    """
     symbol = symbol.upper()
     rows = query_history(symbol, days)
+    accuracy = {}
+    for exch in sorted({r["exchange"] for r in rows}):
+        acc = realized_accuracy([r for r in rows if r["exchange"] == exch])
+        if acc:
+            accuracy[exch] = acc
     return {
         "symbol": symbol,
         "days": days,
@@ -165,6 +231,7 @@ def history(symbol: str, days: int = 7):
              "rate_8h": r["rate_8h"], "net_apy": r["net_apy"]}
             for r in rows
         ],
+        "accuracy": accuracy,
     }
 
 
@@ -413,6 +480,16 @@ def _pct(v: float) -> str:
     return f"{v * 100:.2f}%"
 
 
+_LIQ_LABELS = {"green": "LIQUID", "amber": "THIN", "red": "ILLIQUID"}
+
+
+def _liquidity_badge(r: dict) -> str:
+    flag = r.get("liquidity_flag", "red")
+    pct = r.get("liquidity_pct")
+    title = f"{pct * 100:.2f}% of 24h volume" if pct is not None else "24h volume unknown"
+    return f'<span class="liq-badge liq-{flag}" title="{title}">{_LIQ_LABELS[flag]}</span>'
+
+
 def _render_table_rows(results: list[dict], locked: list[dict] | None = None) -> str:
     if not results and not locked:
         return (
@@ -424,10 +501,14 @@ def _render_table_rows(results: list[dict], locked: list[dict] | None = None) ->
 
     rows = []
     for r in results:
-        profitable = r["is_profitable"]
+        # Headline metric is net-yield-at-size where available (sized rows
+        # carry net_apy_at_size); falls back to the flat net_apy otherwise.
+        net_at_size = r.get("net_apy_at_size", r["net_apy"])
+        profitable = net_at_size > 0
         row_cls = "data-row" if profitable else "data-row greyed"
         net_cls = "num pos" if profitable else "num neg"
-        net_label = _pct(r["net_apy"])
+        gross_label = _pct(r["gross_apy"])
+        net_label = _pct(net_at_size)
         be = r["breakeven_cycles"]
         be_str = f"{be:.1f}" if be is not None else "∞"
         spark_key = f"{r['exchange']}:{r['symbol']}"
@@ -435,7 +516,7 @@ def _render_table_rows(results: list[dict], locked: list[dict] | None = None) ->
         exch = r["exchange"].upper()
         rows.append(
             f'<tr class="{row_cls}" data-symbol="{r["symbol"]}" data-exchange="{r["exchange"]}"'
-            f' data-apy="{r["net_apy"]}" onclick="toggleChart(this)">'
+            f' data-apy="{net_at_size}" onclick="toggleChart(this)">'
             f'<td style="padding:.7rem .5rem .7rem .75rem" onclick="event.stopPropagation()">'
             f'<button class="star-btn" id="star-{safe_id}" '
             f'data-symbol="{r["symbol"]}" data-exchange="{r["exchange"]}" '
@@ -444,13 +525,18 @@ def _render_table_rows(results: list[dict], locked: list[dict] | None = None) ->
             f'<td><span class="sym-name">{r["symbol"]}</span></td>'
             f'<td><span class="exch-badge exch-{r["exchange"]}">{exch}</span></td>'
             f'<td><span class="num">{_pct(r["rate_8h"])}</span></td>'
-            f'<td><span class="{net_cls}" style="font-weight:600">{net_label}</span></td>'
+            f'<td><span class="gross-strike">{gross_label}</span>'
+            f'<span class="{net_cls}" style="font-weight:600">{net_label}</span></td>'
+            f'<td>{_liquidity_badge(r)}</td>'
             f'<td><span class="brkeven">{be_str} cycles</span></td>'
             f'<td class="spark-cell"><canvas id="spark-{safe_id}" data-spark-key="{spark_key}" width="80" height="28"></canvas></td>'
             f'</tr>'
             f'<tr class="chart-row" id="chart-{r["symbol"]}-{r["exchange"]}" style="display:none">'
             f'<td colspan="8">'
-            f'<div class="chart-inner"><canvas id="canvas-{r["symbol"]}-{r["exchange"]}" height="90"></canvas></div>'
+            f'<div class="chart-inner">'
+            f'<div class="accuracy-line" id="accuracy-{r["symbol"]}-{r["exchange"]}"></div>'
+            f'<canvas id="canvas-{r["symbol"]}-{r["exchange"]}" height="90"></canvas>'
+            f'</div>'
             f'</td>'
             f'</tr>'
         )
@@ -459,7 +545,9 @@ def _render_table_rows(results: list[dict], locked: list[dict] | None = None) ->
     if locked:
         for r in locked:
             exch = r["exchange"].upper()
-            net_label = _pct(r["net_apy"])
+            net_at_size = r.get("net_apy_at_size", r["net_apy"])
+            gross_label = _pct(r["gross_apy"])
+            net_label = _pct(net_at_size)
             be = r["breakeven_cycles"]
             be_str = f"{be:.1f}" if be is not None else "∞"
             rows.append(
@@ -468,18 +556,54 @@ def _render_table_rows(results: list[dict], locked: list[dict] | None = None) ->
                 f'<td><span class="sym-name locked-blur">{r["symbol"]}</span></td>'
                 f'<td><span class="exch-badge exch-{r["exchange"]} locked-blur">{exch}</span></td>'
                 f'<td><span class="num locked-blur">{_pct(r["rate_8h"])}</span></td>'
-                f'<td><span class="num pos locked-blur" style="font-weight:600">{net_label}</span></td>'
+                f'<td><span class="gross-strike locked-blur">{gross_label}</span>'
+                f'<span class="num pos locked-blur" style="font-weight:600">{net_label}</span></td>'
+                f'<td class="locked-blur">{_liquidity_badge(r)}</td>'
                 f'<td><span class="brkeven locked-blur">{be_str} cycles</span></td>'
                 f'<td></td>'
                 f'</tr>'
             )
         rows.append(
-            f'<tr><td colspan="7" style="padding:.75rem 1rem 1.25rem;text-align:center">'
+            f'<tr><td colspan="8" style="padding:.75rem 1rem 1.25rem;text-align:center">'
             f'<a href="/billing/checkout" class="pro-unlock-btn">'
             f'Unlock {len(locked)} more pairs — Upgrade to Pro</a>'
             f'</td></tr>'
         )
 
+    return "\n".join(rows)
+
+
+def _render_pair_rows(pairs: list[dict]) -> str:
+    """Cross-exchange spread board rows: same asset, short the richer venue,
+    long the cheaper one. Rendered by /htmx/pairs."""
+    if not pairs:
+        return (
+            '<tr class="data-row"><td colspan="6" '
+            'style="text-align:center;color:var(--mist);font-family:var(--mono);'
+            'font-size:12px;letter-spacing:.06em;padding:2rem 1rem">'
+            'No cross-exchange spreads yet…</td></tr>'
+        )
+
+    rows = []
+    for p in pairs:
+        net_at_size = p["net_apy_at_size"]
+        profitable = net_at_size > 0
+        row_cls = "data-row" if profitable else "data-row greyed"
+        net_cls = "num pos" if profitable else "num neg"
+        gross_label = _pct(p["gross_apy"])
+        net_label = _pct(net_at_size)
+        short_ex, long_ex = p["short_exchange"], p["long_exchange"]
+        rows.append(
+            f'<tr class="{row_cls}">'
+            f'<td><span class="sym-name">{p["asset"]}</span></td>'
+            f'<td><span class="exch-badge exch-{short_ex}">SHORT {short_ex.upper()}</span></td>'
+            f'<td><span class="exch-badge exch-{long_ex}">LONG {long_ex.upper()}</span></td>'
+            f'<td><span class="num">{_pct(p["spread_rate_8h"])}</span></td>'
+            f'<td><span class="gross-strike">{gross_label}</span>'
+            f'<span class="{net_cls}" style="font-weight:600">{net_label}</span></td>'
+            f'<td>{_liquidity_badge(p)}</td>'
+            f'</tr>'
+        )
     return "\n".join(rows)
 
 
@@ -538,7 +662,13 @@ def dashboard(request: Request):
     return templates.TemplateResponse(
         request,
         "dashboard.html",
-        {"user": user, "locked_count": len(locked), "exchanges": exchanges},
+        {
+            "user": user,
+            "locked_count": len(locked),
+            "exchanges": exchanges,
+            "position_sizes": sizing.POSITION_SIZES,
+            "default_position_size": sizing.DEFAULT_POSITION_SIZE,
+        },
     )
 
 
@@ -1102,10 +1232,39 @@ def htmx_stats():
 
 
 @app.get("/htmx/rows", response_class=HTMLResponse)
-def htmx_rows(request: Request):
+def htmx_rows(request: Request, size: int = sizing.DEFAULT_POSITION_SIZE):
+    """
+    Table body partial. `size` is the trader's position size (GBP) — the
+    visible slice is re-ranked by net yield at that size so illiquid
+    outliers sink instead of dominating the board. Tier gating (which
+    pairs a free user can see at all) is unaffected by position size.
+    """
+    if size not in sizing.POSITION_SIZES:
+        size = sizing.DEFAULT_POSITION_SIZE
     user = _current_user(request)
     visible, locked = _tier_results(user)
+    visible = sizing.rank_by_size(visible, size)
+    # Locked/blurred preview rows must be sized too -- otherwise they lack
+    # liquidity_flag entirely and _liquidity_badge() falls back to "red",
+    # showing every Pro-only teaser as illiquid regardless of reality.
+    locked = sizing.rank_by_size(locked, size)
     return _render_table_rows(visible, locked)
+
+
+@app.get("/htmx/pairs", response_class=HTMLResponse)
+def htmx_pairs(request: Request, size: int = sizing.DEFAULT_POSITION_SIZE):
+    """
+    Cross-exchange funding spread board: pairs the same asset's perp across
+    two exchanges (short the richer venue, long the cheaper one) and ranks
+    by net yield of that spread at the given position size. Built only from
+    pairs a user's tier can already see on the main board.
+    """
+    if size not in sizing.POSITION_SIZES:
+        size = sizing.DEFAULT_POSITION_SIZE
+    user = _current_user(request)
+    visible, _locked = _tier_results(user)
+    pairs = pairing.rank_pairs_by_size(visible, size)
+    return _render_pair_rows(pairs)
 
 
 @app.get("/htmx/summary", response_class=HTMLResponse)
