@@ -25,7 +25,7 @@ from . import math as fm
 from . import sizing
 from . import pairing
 from .backtest import realized_accuracy
-from .db import init_db, insert_snapshots, query_delayed, query_history, query_latest, query_sparklines, get_watchlist, toggle_watchlist
+from .db import init_db, insert_snapshots, query_delayed, query_history, query_latest, query_sparklines, get_watchlist, toggle_watchlist, get_conn
 from .scanner import scan
 from .alerts import (check_and_send_alerts, check_anomalies, send_daily_digest,
                      check_multi_exchange, check_watchlist_drops,
@@ -1073,9 +1073,9 @@ ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "bilguun@fundscan.uk")
 def admin(request: Request):
     user = _current_user(request)
     if not user:
-        return RedirectResponse("/auth/request?next=/admin", status_code=302)
+        return RedirectResponse("/auth/request", status_code=302)
     if user["email"] != ADMIN_EMAIL:
-        raise HTTPException(403, f"Forbidden — logged in as {user['email']}, expected {ADMIN_EMAIL}")
+        raise HTTPException(403, "Forbidden")
 
     with get_conn() as conn:
         total_users = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
@@ -1110,6 +1110,7 @@ def admin(request: Request):
     results = _state["results"]
     last_fetch = _state["last_fetch_at"] or "—"
     fetch_errors = _state["fetch_errors"]
+    err_cls = "err" if fetch_errors > 0 else ""
 
     return HTMLResponse(f"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"><title>Admin — FundScan</title>
@@ -1159,7 +1160,7 @@ a.back:hover{{color:var(--gold)}}
   <div class="health">
     <div class="hitem"><div class="k">Pairs tracked</div><div class="v">{len(results)}</div></div>
     <div class="hitem"><div class="k">Last fetch</div><div class="v">{str(last_fetch)[:19].replace("T"," ")}</div></div>
-    <div class="hitem"><div class="k">Fetch errors</div><div class="v {'err' if fetch_errors > 0 else ''}">{fetch_errors}</div></div>
+    <div class="hitem"><div class="k">Fetch errors</div><div class="v {err_cls}">{fetch_errors}</div></div>
   </div>
 </div>
 
