@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{ label }} — Markets — FundScan</title>
+<script src="https://unpkg.com/htmx.org@1.9.12" crossorigin="anonymous"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,500;0,8..60,600;1,8..60,400&family=Instrument+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --navy:#0A1424; --navy-2:#0F1B30; --navy-3:#16233C;
+  --ivory:#EEF1F6; --soft:#A7B2C4; --mist:#67748A;
+  --hairline:rgba(167,178,196,.13); --hairline-2:rgba(167,178,196,.24);
+  --gold:#C9A551; --gold-dim:#8A7238; --green:#3FBE8E; --red:#D96A6A;
+  --serif:'Source Serif 4',Georgia,serif;
+  --sans:'Instrument Sans',system-ui,sans-serif;
+  --mono:'IBM Plex Mono',ui-monospace,monospace;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--navy);color:var(--ivory);font-family:var(--sans);font-size:14px;
+     line-height:1.5;-webkit-font-smoothing:antialiased;overflow-x:hidden}
+::selection{background:var(--gold);color:var(--navy)}
+
+nav{position:sticky;top:0;z-index:50;display:flex;align-items:center;justify-content:space-between;
+    padding:13px 32px;background:rgba(10,20,36,.82);backdrop-filter:blur(18px);
+    border-bottom:1px solid var(--hairline);gap:.75rem;flex-wrap:wrap}
+.logo{display:flex;align-items:center;gap:10px;text-decoration:none;flex-shrink:0}
+.logo-mark{width:24px;height:24px;flex-shrink:0}
+.logo-word{font-family:var(--serif);font-weight:600;font-size:17px;letter-spacing:-.01em;color:var(--ivory)}
+.logo-word i{font-style:normal;color:var(--gold)}
+.nav-links{display:flex;align-items:center;gap:2px;flex-wrap:wrap;margin-left:.5rem}
+.nav-links a{font-family:var(--mono);font-size:11px;letter-spacing:.05em;text-transform:uppercase;
+             color:var(--mist);text-decoration:none;padding:6px 10px;border-radius:4px;transition:all .2s}
+.nav-links a:hover{color:var(--soft);background:rgba(167,178,196,.06)}
+.nav-links a.active{color:var(--gold);background:rgba(201,165,81,.08)}
+.nav-right{display:flex;align-items:center;gap:1.25rem;flex-wrap:wrap;margin-left:auto}
+.user-pill{font-family:var(--mono);font-size:11.5px;color:var(--mist)}
+.user-pill b{color:var(--soft);font-weight:500}
+.nav-link{font-family:var(--mono);font-size:11.5px;color:var(--mist);text-decoration:none;
+          letter-spacing:.04em;transition:color .2s}
+.nav-link:hover{color:var(--gold)}
+.btn-upgrade{font-family:var(--sans);font-weight:600;font-size:12.5px;padding:7px 16px;
+             background:var(--gold);color:#221A08;border-radius:4px;text-decoration:none;
+             transition:all .2s;white-space:nowrap}
+.btn-upgrade:hover{background:#D9B65F}
+
+.page-head{padding:1.5rem 32px .5rem;display:flex;align-items:baseline;gap:.75rem;flex-wrap:wrap}
+.page-head h1{font-family:var(--serif);font-size:1.6rem;font-weight:600}
+.page-head a.back{font-family:var(--mono);font-size:11.5px;color:var(--mist);text-decoration:none}
+.page-head a.back:hover{color:var(--gold)}
+
+.toolbar{display:flex;align-items:center;gap:10px;padding:12px 32px;
+         border-bottom:1px solid var(--hairline);flex-wrap:wrap}
+.filter-tabs{display:flex;gap:6px;flex-wrap:wrap}
+.tab{font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;
+     padding:5px 12px;border-radius:4px;border:1px solid var(--hairline);
+     background:transparent;color:var(--mist);cursor:pointer;transition:all .2s}
+.tab:hover{border-color:var(--hairline-2);color:var(--soft)}
+.tab.active{border-color:var(--gold);color:var(--gold);background:rgba(201,165,81,.08)}
+.sort-select{font-family:var(--mono);font-size:11px;letter-spacing:.06em;padding:6px 10px;
+             background:rgba(15,27,48,.6);border:1px solid var(--hairline);border-radius:4px;
+             color:var(--soft);outline:none;cursor:pointer;margin-left:auto}
+.size-label{font-family:var(--mono);font-size:11px;letter-spacing:.06em;color:var(--mist);
+            text-transform:uppercase;margin-right:2px}
+
+.container{padding:0 32px 3rem;overflow-x:auto}
+table{width:100%;border-collapse:collapse}
+thead th{font-family:var(--mono);font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;
+         color:var(--mist);padding:.75rem 1rem;border-bottom:1px solid var(--hairline);
+         text-align:left;white-space:nowrap}
+tbody tr.data-row td{padding:.7rem 1rem;border-bottom:1px solid rgba(167,178,196,.07);font-size:13.5px}
+tbody tr.data-row:first-child td{padding-top:.9rem}
+.sym-name{font-family:var(--sans);font-weight:600;font-size:13.5px;color:var(--ivory)}
+.exch-badge{display:inline-block;font-family:var(--mono);font-size:10px;letter-spacing:.1em;
+            text-transform:uppercase;padding:2px 7px;border-radius:3px;
+            background:rgba(167,178,196,.07);border:1px solid var(--hairline);color:var(--soft)}
+.exch-bybit{border-color:rgba(247,144,9,.25);color:#F79009;background:rgba(247,144,9,.06)}
+.exch-binance{border-color:rgba(243,186,47,.25);color:#F3BA2F;background:rgba(243,186,47,.06)}
+.exch-okx{border-color:rgba(167,178,196,.25);color:var(--soft)}
+.exch-hyperliquid{border-color:rgba(99,102,241,.3);color:#818CF8;background:rgba(99,102,241,.06)}
+.exch-cme{border-color:rgba(201,165,81,.3);color:var(--gold);background:rgba(201,165,81,.06)}
+.num{font-family:var(--mono);font-size:13px}
+.num.pos{color:var(--green)}
+.num.neg{color:var(--red)}
+.note{font-family:var(--mono);font-size:11px;color:var(--mist);margin-top:1.25rem;
+      line-height:1.85;letter-spacing:.02em}
+
+.skeleton-row td{padding:.7rem 1rem;border-bottom:1px solid rgba(167,178,196,.06)}
+.skel{display:inline-block;height:13px;border-radius:3px;
+  background:linear-gradient(90deg,rgba(167,178,196,.05),rgba(167,178,196,.1),rgba(167,178,196,.05));
+  background-size:200%;animation:shimmer 1.8s ease infinite}
+@keyframes shimmer{from{background-position:200%}to{background-position:-200%}}
+
+@media(max-width:900px){
+  nav{padding:10px 18px}
+  .nav-links{order:3;width:100%;margin-left:0;padding-top:6px;border-top:1px solid var(--hairline)}
+  .page-head,.toolbar,.container{padding-left:18px;padding-right:18px}
+}
+</style>
+</head>
+<body>
+
+<nav>
+  <a class="logo" href="/app">
+    <svg class="logo-mark" viewBox="0 0 34 34" aria-hidden="true">
+      <circle cx="17" cy="17" r="15.5" fill="none" stroke="var(--gold)" stroke-width="1.6"/>
+      <path d="M10 21 L15 16 L19 19 L24 12" fill="none" stroke="var(--green)" stroke-width="2.2" stroke-linecap="round"/>
+      <circle cx="24" cy="12" r="2" fill="var(--green)"/>
+    </svg>
+    <span class="logo-word">FundScan<i>.</i></span>
+  </a>
+  <div class="nav-links">
+    {% for key, cat_label in reference_categories %}
+    <a href="/app/markets/{{ key }}" class="{{ 'active' if key == category else '' }}">{{ cat_label }}</a>
+    {% endfor %}
+  </div>
+  <div class="nav-right">
+    {% if user %}
+    <span class="user-pill"><b>{{ user.email }}</b> · {{ user.tier }}</span>
+    <a href="/app" class="nav-link">funding board</a>
+    <a href="/account" class="nav-link">account</a>
+    <a href="/auth/logout" class="nav-link">sign out</a>
+    {% endif %}
+    {% if user and user.tier == 'free' %}
+    <a href="/billing/checkout" class="btn-upgrade">Upgrade — £20/mo</a>
+    {% endif %}
+  </div>
+</nav>
+
+<div class="page-head">
+  <h1>{{ label }}</h1>
+  <a href="/app" class="back">← Funding board</a>
+</div>
+
+<div class="toolbar">
+  {% if category == 'options' %}
+  <span class="size-label">Underlying:</span>
+  <div class="filter-tabs" id="options-underlying-tabs">
+    {% for u in options_underlyings %}
+    <button class="tab{% if loop.first %} active{% endif %}" onclick="loadOptionsChain('{{ u }}', this)">{{ u }}</button>
+    {% endfor %}
+  </div>
+  {% else %}
+  <span class="size-label">Source:</span>
+  <select class="sort-select" id="reference-source" onchange="reloadTable()">
+    {% for key, src_label in reference_sources %}
+    <option value="{{ key }}">{{ src_label }}</option>
+    {% endfor %}
+  </select>
+  {% endif %}
+</div>
+
+<div class="container">
+  <table>
+    <thead>
+      {% if category == 'options' %}
+      <tr><th>Expiry</th><th>Type</th><th>Strike</th><th>Last</th><th>Bid</th><th>Ask</th><th>Volume</th></tr>
+      {% elif category == 'crypto' %}
+      <tr><th>Symbol</th><th>Exchange</th><th>Rate/8h</th><th>Net APY</th></tr>
+      {% else %}
+      <tr><th>Symbol</th><th>Price</th><th>Change</th></tr>
+      {% endif %}
+    </thead>
+    <tbody id="reference-body"
+           hx-get="{{ initial_url }}" hx-trigger="load" hx-swap="innerHTML">
+      <tr class="skeleton-row"><td><span class="skel" style="width:80px"></span></td>
+          <td><span class="skel" style="width:60px"></span></td>
+          <td><span class="skel" style="width:60px"></span></td></tr>
+    </tbody>
+  </table>
+  <p class="note">
+    {% if user.tier == 'pro' %}
+    Full symbol list for this category.
+    {% else %}
+    Top 7 best-known instruments on the free plan. <a href="/billing/checkout" style="color:var(--gold)">Upgrade to Pro</a> for the full list.
+    {% endif %}
+    {% if category in ('cfds', 'spread_bets') %}
+    CFDs and Spread Bets mirror the same underlying stock/forex/commodity prices — there's no
+    separate feed for those two, since they're broker wrappers rather than distinct instruments.
+    {% elif category == 'crypto' %}
+    Reuses the same live data as the funding board.
+    {% elif category == 'options' %}
+    Always sourced from Yahoo Finance (the only source here with option chain data) — every
+    strike for the nearest {{ '2 expiries' if user.tier == 'pro' else 'expiry' }} of the selected underlying.
+    {% endif %}
+  </p>
+</div>
+
+<script>
+function reloadTable() {
+  const source = document.getElementById('reference-source').value;
+  htmx.ajax('GET', `/htmx/reference/{{ category }}?source=${source}`, {target: '#reference-body', swap: 'innerHTML'});
+}
+function loadOptionsChain(symbol, btn) {
+  document.querySelectorAll('#options-underlying-tabs .tab').forEach(t=>t.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  htmx.ajax('GET', `/htmx/reference/options/${symbol}`, {target: '#reference-body', swap: 'innerHTML'});
+}
+</script>
+</body>
+</html>

@@ -684,6 +684,39 @@ def dashboard(request: Request):
     )
 
 
+@app.get("/app/markets/{category}", response_class=HTMLResponse)
+def market_category_page(category: str, request: Request):
+    """Dedicated page per Markets category, linked from the top nav."""
+    user = _current_user(request)
+    if not user:
+        return RedirectResponse("/auth/request", status_code=302)
+    labels = dict(REFERENCE_CATEGORIES)
+    if category not in labels:
+        raise HTTPException(404, f"Unknown category {category}")
+    tier = _user_tier(user)
+
+    if category == "options":
+        underlyings = refdata.FREE_OPTIONS_UNDERLYINGS if tier == "free" else refdata.OPTIONS_UNDERLYINGS
+        initial_url = f"/htmx/reference/options/{underlyings[0]}"
+    else:
+        initial_url = f"/htmx/reference/{category}?source=yahoo"
+        underlyings = []
+
+    return templates.TemplateResponse(
+        request,
+        "market_category.html",
+        {
+            "user": user,
+            "category": category,
+            "label": labels[category],
+            "reference_categories": REFERENCE_CATEGORIES,
+            "reference_sources": refdata.PROVIDERS,
+            "options_underlyings": underlyings,
+            "initial_url": initial_url,
+        },
+    )
+
+
 # ---------------------------------------------------------------------------
 # Auth routes — magic link flow
 # ---------------------------------------------------------------------------
