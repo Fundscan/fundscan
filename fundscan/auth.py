@@ -47,7 +47,7 @@ _token_signer = URLSafeTimedSerializer(SECRET_KEY, salt="magic-link")
 # Emails that always get Pro regardless of billing status (comps). Enforced
 # on every load, not just at signup, so it self-heals even if the row
 # already existed as free or a webhook ever touched it.
-COMP_PRO_EMAILS = {"klaiduskazlauskas01@gmail.com"}
+COMP_PRO_EMAILS = {"klaiduskazlauskas01@gmail.com", "bilguun@fundscan.uk"}
 
 
 def _apply_comp_tier(user: dict) -> dict:
