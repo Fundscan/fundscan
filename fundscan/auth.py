@@ -44,24 +44,42 @@ _token_signer = URLSafeTimedSerializer(SECRET_KEY, salt="magic-link")
 # User helpers
 # ---------------------------------------------------------------------------
 
+# Emails that always get Pro regardless of billing status (comps). Enforced
+# on every load, not just at signup, so it self-heals even if the row
+# already existed as free or a webhook ever touched it.
+COMP_PRO_EMAILS = {"klaiduskazlauskas01@gmail.com"}
+
+
+def _apply_comp_tier(user: dict) -> dict:
+    if user["email"] in COMP_PRO_EMAILS and user["tier"] != "pro":
+        set_user_tier(user["email"], "pro")
+        user["tier"] = "pro"
+    return user
+
+
 def get_or_create_user(email: str) -> dict:
     with get_conn() as conn:
         row = conn.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
-        if row:
-            return dict(row)
-        now = datetime.now(timezone.utc).isoformat()
-        conn.execute(
-            "INSERT INTO users (email, tier, created_at) VALUES (?, 'free', ?)",
-            (email, now),
-        )
-        row = conn.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
-        return dict(row)
+        if not row:
+            now = datetime.now(timezone.utc).isoformat()
+            conn.execute(
+                "INSERT INTO users (email, tier, created_at) VALUES (?, 'free', ?)",
+                (email, now),
+            )
+            row = conn.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
+        user = dict(row)
+    # Applied after the connection above closes -- set_user_tier() opens its
+    # own connection, and SQLite locks on a second writer while the first is open.
+    return _apply_comp_tier(user)
 
 
 def get_user_by_id(user_id: int) -> Optional[dict]:
     with get_conn() as conn:
         row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
-        return dict(row) if row else None
+        if not row:
+            return None
+        user = dict(row)
+    return _apply_comp_tier(user)
 
 
 def set_user_tier(email: str, tier: str) -> None:
