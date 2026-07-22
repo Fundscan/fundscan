@@ -155,6 +155,7 @@ tbody tr.greyed td{opacity:.55}
 .exch-binance{border-color:rgba(243,186,47,.25);color:#F3BA2F;background:rgba(243,186,47,.06)}
 .exch-okx{border-color:rgba(167,178,196,.25);color:var(--soft)}
 .exch-hyperliquid{border-color:rgba(99,102,241,.3);color:#818CF8;background:rgba(99,102,241,.06)}
+.exch-cme{border-color:rgba(201,165,81,.3);color:var(--gold);background:rgba(201,165,81,.06)}
 .num{font-family:var(--mono);font-size:13px}
 .num.pos{color:var(--green)}
 .num.neg{color:var(--red)}
@@ -352,6 +353,51 @@ tr.chart-row td{padding:.5rem 1rem 1.25rem;background:rgba(15,27,48,.4);border-b
   </div>
 </div>
 
+<div class="board-switch" style="margin-top:1.5rem">
+  <span class="size-label">Markets:</span>
+  <div class="filter-tabs" id="reference-tabs">
+    {% for key, label in reference_categories %}
+    <button class="tab{% if loop.first %} active{% endif %}" data-category="{{ key }}"
+            onclick="loadReferenceCategory('{{ key }}', this)">{{ label }}</button>
+    {% endfor %}
+  </div>
+  <span class="size-label" style="margin-left:auto">Source:</span>
+  <select class="sort-select" id="reference-source" onchange="onReferenceSourceChange()">
+    {% for key, label in reference_sources %}
+    <option value="{{ key }}">{{ label }}</option>
+    {% endfor %}
+  </select>
+</div>
+
+<div class="container">
+  <table>
+    <thead id="reference-thead">
+      <tr><th>Symbol</th><th>Price</th><th>Change</th></tr>
+    </thead>
+    <tbody id="reference-body"
+           hx-get="/htmx/reference/{{ reference_categories[0][0] }}?source={{ reference_sources[0][0] }}"
+           hx-trigger="load" hx-swap="innerHTML">
+      <tr class="skeleton-row"><td><span class="skel" style="width:80px"></span></td>
+          <td><span class="skel" style="width:60px"></span></td>
+          <td><span class="skel" style="width:60px"></span></td></tr>
+    </tbody>
+  </table>
+  <p class="note">
+    {% if user.tier == 'pro' %}
+    Reference quotes across traditional asset classes — pick a data source above; full symbol
+    lists per category.
+    {% else %}
+    Reference quotes across traditional asset classes — top 7 best-known instruments per category
+    on the free plan.
+    <a href="/billing/checkout" style="color:var(--gold)">Upgrade to Pro</a> for full symbol lists.
+    {% endif %}
+    CFDs and Spread Bets mirror the same underlying stock/forex/commodity prices shown elsewhere on
+    this page — there's no separate feed for those two, since they're broker wrappers rather than
+    distinct instruments. Crypto reuses the funding board data above. Options always uses Yahoo
+    Finance (the only source here with option chain data) regardless of the source picker.
+  </p>
+</div>
+
 <script>
 const activeCharts = {};
 let _sparklineData = {};
@@ -477,6 +523,40 @@ function setPositionSize(btn) {
   _positionSize = parseInt(btn.dataset.size, 10);
   htmx.ajax('GET', `/htmx/rows?size=${_positionSize}`, {target: '#rates-body', swap: 'innerHTML'});
   htmx.ajax('GET', `/htmx/pairs?size=${_positionSize}`, {target: '#pairs-body', swap: 'innerHTML'});
+}
+
+// ── Markets (reference data) — Stocks/ETFs/Futures/Options/Forex/etc ──────
+const _referenceHeaders = {
+  options: '<tr><th>Expiry</th><th>Type</th><th>Strike</th><th>Last</th><th>Bid</th><th>Ask</th><th>Volume</th></tr>',
+  crypto: '<tr><th>Symbol</th><th>Exchange</th><th>Rate/8h</th><th>Net APY</th></tr>',
+};
+let _activeReferenceCategory = '{{ reference_categories[0][0] }}';
+
+function loadReferenceCategory(category, btn) {
+  document.querySelectorAll('#reference-tabs .tab').forEach(t=>t.classList.remove('active'));
+  btn.classList.add('active');
+  _activeReferenceCategory = category;
+  document.getElementById('reference-thead').innerHTML =
+    _referenceHeaders[category] || '<tr><th>Symbol</th><th>Price</th><th>Change</th></tr>';
+  if (category === 'options') {
+    loadOptionsChain(null);
+    return;
+  }
+  const source = document.getElementById('reference-source').value;
+  htmx.ajax('GET', `/htmx/reference/${category}?source=${source}`, {target: '#reference-body', swap: 'innerHTML'});
+}
+
+function onReferenceSourceChange() {
+  // Options always uses Yahoo regardless of the picker, so nothing to reload there.
+  if (_activeReferenceCategory && _activeReferenceCategory !== 'options') {
+    const btn = document.querySelector(`#reference-tabs .tab[data-category="${_activeReferenceCategory}"]`);
+    if (btn) loadReferenceCategory(_activeReferenceCategory, btn);
+  }
+}
+
+function loadOptionsChain(symbol) {
+  const path = symbol ? `/htmx/reference/options/${symbol}` : '/htmx/reference/options';
+  htmx.ajax('GET', path, {target: '#reference-body', swap: 'innerHTML'});
 }
 
 // ── Board switch — Funding Board vs. Cross-Exchange Spreads ────────────────

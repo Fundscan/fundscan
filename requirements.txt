@@ -6,3 +6,4 @@ itsdangerous>=2.1.0
 python-multipart>=0.0.9
 stripe>=8.0.0
 pytest>=8.0.0
+yfinance>=0.2.40

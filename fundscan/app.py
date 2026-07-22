@@ -24,6 +24,7 @@ from fastapi.templating import Jinja2Templates
 from . import math as fm
 from . import sizing
 from . import pairing
+from . import reference_data as refdata
 from .backtest import realized_accuracy
 from .db import init_db, insert_snapshots, query_delayed, query_history, query_latest, query_sparklines, get_watchlist, toggle_watchlist, get_conn
 from .scanner import scan
@@ -455,6 +456,14 @@ def _current_user(request: Request) -> Optional[dict]:
 
 FREE_TIER_LIMIT = 25
 
+# Pro-only "Markets" reference data section (see reference_data.py).
+REFERENCE_CATEGORIES = [
+    ("stocks", "Stocks"), ("etfs", "ETFs"), ("futures", "Futures"),
+    ("options", "Options"), ("forex", "Forex"), ("crypto", "Crypto"),
+    ("commodities", "Commodities"), ("bonds", "Bonds"),
+    ("cfds", "CFDs"), ("spread_bets", "Spread Bets"),
+]
+
 
 def _tier_results(user: Optional[dict]) -> tuple[list[dict], list[dict]]:
     """
@@ -659,6 +668,7 @@ def dashboard(request: Request):
         return RedirectResponse("/auth/request", status_code=302)
     visible, locked = _tier_results(user)
     exchanges = sorted({r["exchange"] for r in _state["results"]})
+    tier = _user_tier(user)
     return templates.TemplateResponse(
         request,
         "dashboard.html",
@@ -668,6 +678,8 @@ def dashboard(request: Request):
             "exchanges": exchanges,
             "position_sizes": sizing.POSITION_SIZES,
             "default_position_size": sizing.DEFAULT_POSITION_SIZE,
+            "reference_categories": REFERENCE_CATEGORIES,
+            "reference_sources": refdata.PROVIDERS,
         },
     )
 
@@ -1277,6 +1289,128 @@ def htmx_summary(request: Request):
         f'hx-get="/htmx/summary" hx-trigger="every 30s" hx-swap="outerHTML">'
         f'{content}</div>'
     )
+
+
+# ---------------------------------------------------------------------------
+# HTMX partials — Pro-only "Markets" reference data
+# ---------------------------------------------------------------------------
+
+def _require_login(request: Request) -> dict:
+    user = _current_user(request)
+    if not user:
+        raise HTTPException(401, "Login required")
+    return user
+
+
+def _user_tier(user: dict) -> str:
+    return "pro" if user.get("tier") == "pro" else "free"
+
+
+def _render_reference_quote_rows(rows: list[dict], note: Optional[str] = None) -> str:
+    if not rows:
+        message = note or "No data available right now"
+        return (f'<tr><td colspan="3" style="text-align:center;color:var(--mist);'
+                f'padding:1.5rem">{message}</td></tr>')
+    out = []
+    for r in rows:
+        chg = r["change_pct"]
+        chg_cls = "num pos" if (chg or 0) >= 0 else "num neg"
+        chg_label = f"{chg:+.2f}%" if chg is not None else "—"
+        out.append(
+            f'<tr class="data-row">'
+            f'<td><span class="sym-name">{r["symbol"]}</span></td>'
+            f'<td><span class="num">{r["price"]:,.4f}</span></td>'
+            f'<td><span class="{chg_cls}">{chg_label}</span></td>'
+            f'</tr>'
+        )
+    return "".join(out)
+
+
+def _render_crypto_reference_rows(tier: str) -> str:
+    results = _state["results"]
+    if not results:
+        return ('<tr><td colspan="4" style="text-align:center;color:var(--mist);'
+                'padding:1.5rem">Fetching data…</td></tr>')
+    if tier == "free":
+        results = results[:7]
+    out = []
+    for r in results:
+        net_cls = "num pos" if r["is_profitable"] else "num neg"
+        out.append(
+            f'<tr class="data-row">'
+            f'<td><span class="sym-name">{r["symbol"]}</span></td>'
+            f'<td><span class="exch-badge exch-{r["exchange"]}">{r["exchange"].upper()}</span></td>'
+            f'<td><span class="num">{_pct(r["rate_8h"])}</span></td>'
+            f'<td><span class="{net_cls}">{_pct(r["net_apy"])}</span></td>'
+            f'</tr>'
+        )
+    return "".join(out)
+
+
+def _render_options_rows(symbol: str, tier: str) -> str:
+    symbol = symbol.upper()
+    underlyings = refdata.FREE_OPTIONS_UNDERLYINGS if tier == "free" else refdata.OPTIONS_UNDERLYINGS
+    buttons = "".join(
+        f'<button class="tab{" active" if u == symbol else ""}" '
+        f'onclick="loadOptionsChain(\'{u}\')">{u}</button>'
+        for u in underlyings
+    )
+    selector_row = (
+        f'<tr><td colspan="7" style="padding:.6rem 0">'
+        f'<div class="filter-tabs">{buttons}</div></td></tr>'
+    )
+
+    rows = refdata.fetch_options(symbol, tier)
+    if not rows:
+        return selector_row + (
+            '<tr><td colspan="7" style="text-align:center;color:var(--mist);'
+            'padding:1.5rem">No chain data available for this underlying right now</td></tr>'
+        )
+
+    body = []
+    for r in rows:
+        type_cls = "pos" if r["type"] == "call" else "neg"
+        body.append(
+            f'<tr class="data-row">'
+            f'<td>{r["expiry"]}</td>'
+            f'<td><span class="num {type_cls}">{r["type"].upper()}</span></td>'
+            f'<td><span class="num">{r["strike"]:,.2f}</span></td>'
+            f'<td><span class="num">{r["last"] if r["last"] is not None else "—"}</span></td>'
+            f'<td><span class="num">{r["bid"] if r["bid"] is not None else "—"}</span></td>'
+            f'<td><span class="num">{r["ask"] if r["ask"] is not None else "—"}</span></td>'
+            f'<td><span class="num">{r["volume"] if r["volume"] is not None else "—"}</span></td>'
+            f'</tr>'
+        )
+    return selector_row + "".join(body)
+
+
+@app.get("/htmx/reference/options/{symbol}", response_class=HTMLResponse)
+def htmx_reference_options(symbol: str, request: Request):
+    user = _require_login(request)
+    tier = _user_tier(user)
+    underlyings = refdata.FREE_OPTIONS_UNDERLYINGS if tier == "free" else refdata.OPTIONS_UNDERLYINGS
+    if symbol.upper() not in underlyings:
+        raise HTTPException(404, f"Unknown underlying {symbol}")
+    return _render_options_rows(symbol, tier)
+
+
+@app.get("/htmx/reference/{category}", response_class=HTMLResponse)
+def htmx_reference(category: str, request: Request, source: str = "yahoo"):
+    user = _require_login(request)
+    tier = _user_tier(user)
+    if category == "options":
+        underlyings = refdata.FREE_OPTIONS_UNDERLYINGS if tier == "free" else refdata.OPTIONS_UNDERLYINGS
+        return _render_options_rows(underlyings[0], tier)
+    if category == "crypto":
+        return _render_crypto_reference_rows(tier)
+    try:
+        rows, note = refdata.fetch_category(category, source, tier)
+    except ValueError:
+        raise HTTPException(404, f"Unknown category {category}")
+    except Exception as e:
+        log.error("Reference data fetch failed for %s/%s: %s", category, source, e)
+        rows, note = [], "Fetch failed — try again shortly."
+    return _render_reference_quote_rows(rows, note)
 
 
 @app.get("/htmx/status", response_class=HTMLResponse)
