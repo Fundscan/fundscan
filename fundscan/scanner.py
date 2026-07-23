@@ -10,6 +10,11 @@ from . import math as fm
 
 log = logging.getLogger(__name__)
 
+# Rows below this 24h notional volume are dropped from every ranking --
+# thin markets produce technically-real but unreliable/untradeable-at-size
+# funding rates that would otherwise pollute the top of the board.
+MIN_VOLUME_24H_USD = 10_000_000
+
 
 def _run_fetcher(fetch_fn) -> list[dict]:
     """Run one fetcher, return [] on any exception (isolation guarantee)."""
@@ -27,6 +32,7 @@ def scan() -> list[dict]:
     Each result dict contains:
         exchange, symbol, rate_8h, gross_apy, net_apy,
         breakeven_cycles, is_profitable, fetched_at
+    Rows below MIN_VOLUME_24H_USD are dropped before ranking.
     Sorted by net_apy descending (best opportunities first).
     """
     raw: list[dict] = []
@@ -34,6 +40,8 @@ def scan() -> list[dict]:
         futures = {pool.submit(_run_fetcher, fn): fn for fn in FETCHERS}
         for future in as_completed(futures):
             raw.extend(future.result())
+
+    raw = [r for r in raw if r.get("volume_24h_usd", 0) >= MIN_VOLUME_24H_USD]
 
     fetched_at = datetime.now(timezone.utc).isoformat()
     enriched = []

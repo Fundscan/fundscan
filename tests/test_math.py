@@ -151,6 +151,7 @@ def test_fetcher_isolation():
             "rate_8h": 0.0001,
             "funding_interval_hours": 8,
             "next_funding_time": None,
+            "volume_24h_usd": 50_000_000,
         }]
 
     with patch("fundscan.scanner.FETCHERS", [bad_fetcher, good_fetcher]):
@@ -159,3 +160,34 @@ def test_fetcher_isolation():
     assert len(results) == 1
     assert results[0]["exchange"] == "mock"
     assert results[0]["net_apy"] == pytest.approx(net_apy(0.0001))
+
+
+def test_scan_drops_low_volume_rows():
+    """
+    Rows below MIN_VOLUME_24H_USD are excluded from the ranking entirely --
+    thin markets produce real but unreliable/untradeable-at-size funding
+    rates that would otherwise pollute the top of the board.
+    """
+    from unittest.mock import patch
+    from fundscan.scanner import scan, MIN_VOLUME_24H_USD
+
+    def thin_fetcher():
+        return [{
+            "exchange": "mock", "symbol": "THINUSDT", "rate_8h": 0.01,
+            "funding_interval_hours": 8, "next_funding_time": None,
+            "volume_24h_usd": MIN_VOLUME_24H_USD - 1,
+        }]
+
+    def liquid_fetcher():
+        return [{
+            "exchange": "mock", "symbol": "LIQUIDUSDT", "rate_8h": 0.0001,
+            "funding_interval_hours": 8, "next_funding_time": None,
+            "volume_24h_usd": MIN_VOLUME_24H_USD,
+        }]
+
+    with patch("fundscan.scanner.FETCHERS", [thin_fetcher, liquid_fetcher]):
+        results = scan()
+
+    symbols = {r["symbol"] for r in results}
+    assert "LIQUIDUSDT" in symbols
+    assert "THINUSDT" not in symbols
