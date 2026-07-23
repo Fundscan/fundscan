@@ -17,13 +17,14 @@ import csv
 import io
 import traceback
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse, StreamingResponse, Response
 from fastapi.templating import Jinja2Templates
 
 from . import math as fm
 from . import sizing
 from . import pairing
+from . import signals
 from .backtest import realized_accuracy
 from .db import init_db, insert_snapshots, query_delayed, query_history, query_latest, query_sparklines, get_watchlist, toggle_watchlist, get_conn
 from .scanner import scan
@@ -299,6 +300,25 @@ def api_v1_rates(request: Request):
             for r in results
         ],
     }
+
+
+@app.get("/api/signals/kraken")
+def api_signals_kraken(x_fundscan_token: str = Header(default=None)):
+    """
+    KKB integration Phase 3 -- structured, expiring trade signals for the
+    Kraken pairs KKB can currently execute (see signals.py). Requires the
+    shared token in FUNDSCAN_SIGNAL_TOKEN via the X-FundScan-Token header;
+    the endpoint is 404'd (not 401'd) if the token env var isn't
+    configured at all, so it's silently absent rather than discoverable
+    with a WWW-Authenticate-style hint when nobody's supposed to be
+    calling it yet.
+    """
+    expected_token = os.getenv("FUNDSCAN_SIGNAL_TOKEN")
+    if not expected_token:
+        raise HTTPException(404, "Not found")
+    if x_fundscan_token != expected_token:
+        raise HTTPException(401, "Invalid or missing X-FundScan-Token header")
+    return signals.build_kraken_signals(_state["results"])
 
 
 @app.get("/export/rates.csv")
