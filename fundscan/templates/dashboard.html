@@ -515,6 +515,50 @@ function filterRows() {
     tr.style.display = hide ? 'none' : '';
     if (chartRow) chartRow.style.display = 'none'; // collapse on filter
   });
+  updateStatsCards();
+}
+
+// ── Stat cards follow the active filter ─────────────────────────────────────
+// With no filter the cards are the server-rendered market-wide summary. When
+// a search/exchange filter is active they recompute over the visible rows and
+// say so — market-wide numbers above a filtered table read as if they belong
+// to the filter.
+function _filterActive() {
+  return document.getElementById('search').value.trim() !== '' || _activeExchange !== 'all';
+}
+function updateStatsCards() {
+  const cards = document.querySelectorAll('#stats-section .stat-card');
+  if (cards.length < 4) return;
+  const firstLabel = cards[0].querySelector('.l');
+  if (!_filterActive()) {
+    // Restore the market-wide cards only if we previously overwrote them.
+    if (firstLabel && firstLabel.textContent.includes('· filtered')) {
+      htmx.ajax('GET', '/htmx/stats', {target: '#stats-section', swap: 'outerHTML'});
+    }
+    return;
+  }
+  const rows = [...document.querySelectorAll('#rates-body tr.data-row:not(.locked-row)')]
+    .filter(tr => tr.style.display !== 'none' && tr.dataset.apy !== undefined)
+    .map(tr => {
+      const apy = parseFloat(tr.dataset.apy);
+      return {sym: tr.dataset.symbol, apy: apy <= -1e11 ? null : apy}; // sentinel = n/a (no depth data)
+    });
+  const pos = rows.filter(r => r.apy !== null && r.apy > 0);
+  const best = pos.length ? pos.reduce((a, b) => (a.apy > b.apy ? a : b)) : null;
+  const avg = pos.length ? pos.reduce((s, r) => s + r.apy, 0) / pos.length : null;
+  const vals = [
+    best ? `+${(best.apy * 100).toFixed(2)}%` : '—',
+    String(pos.length),
+    avg !== null ? `+${(avg * 100).toFixed(2)}%` : '—',
+    best ? best.sym.replace('USDT', '').replace('-PERP', '') : '—',
+  ];
+  cards.forEach((c, i) => {
+    const n = c.querySelector('.n'), l = c.querySelector('.l');
+    if (!l.dataset.base) l.dataset.base = l.textContent;
+    n.textContent = vals[i];
+    if (i === 0 || i === 2) n.classList.toggle('pos', vals[i] !== '—');
+    l.textContent = l.dataset.base + ' · filtered';
+  });
 }
 
 function setSortCol(col) {
@@ -564,6 +608,11 @@ document.body.addEventListener('htmx:afterSwap', e => {
     loadSparklines();
     applyWatchlistStars();
     filterRows();
+  }
+  // The 30s stats refresh replaces the cards with market-wide numbers;
+  // re-scope them if a filter is active.
+  if (e.detail.target.id === 'stats-section') {
+    updateStatsCards();
   }
 });
 document.addEventListener('DOMContentLoaded', () => {
