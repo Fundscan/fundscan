@@ -1233,7 +1233,7 @@ def htmx_stats():
 
     cards = (
         card(f'+{best*100:.2f}%' if best else '—', 'Best net APY', pos=bool(best and best > 0))
-        + card(str(len(profitable)), 'Pairs above fees')
+        + card(str(len(profitable)), 'Above fees')
         + card(f'+{avg*100:.2f}%' if avg else '—', 'Avg net APY', pos=bool(avg and avg > 0))
         + card(mover_sym, 'Top instrument')
     )

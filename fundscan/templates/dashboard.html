@@ -543,20 +543,35 @@ function updateStatsCards() {
       const apy = parseFloat(tr.dataset.apy);
       return {sym: tr.dataset.symbol, apy: apy <= -1e11 ? null : apy}; // sentinel = n/a (no depth data)
     });
-  const pos = rows.filter(r => r.apy !== null && r.apy > 0);
+  // Three honest states: nothing measurable in the filter ("n/a" — e.g. CME
+  // rows with no depth data), measurable but nothing clears fees ("none"),
+  // or real numbers.
+  const computable = rows.filter(r => r.apy !== null);
+  const pos = computable.filter(r => r.apy > 0);
   const best = pos.length ? pos.reduce((a, b) => (a.apy > b.apy ? a : b)) : null;
   const avg = pos.length ? pos.reduce((s, r) => s + r.apy, 0) / pos.length : null;
-  const vals = [
-    best ? `+${(best.apy * 100).toFixed(2)}%` : '—',
-    String(pos.length),
-    avg !== null ? `+${(avg * 100).toFixed(2)}%` : '—',
-    best ? best.sym.replace('USDT', '').replace('-PERP', '') : '—',
-  ];
+  let vals, hint;
+  if (!computable.length) {
+    vals = ['n/a', 'n/a', 'n/a', 'n/a'];
+    hint = rows.length
+      ? 'Net APY cannot be computed for the filtered instruments (no order-book depth data)'
+      : 'No instruments match this filter';
+    if (!rows.length) vals = ['—', '—', '—', '—'];
+  } else {
+    vals = [
+      best ? `+${(best.apy * 100).toFixed(2)}%` : 'none',
+      String(pos.length),
+      avg !== null ? `+${(avg * 100).toFixed(2)}%` : 'none',
+      best ? best.sym.replace('USDT', '').replace('-PERP', '') : 'none',
+    ];
+    hint = best ? '' : 'Instruments matched, but none clears its round-trip costs';
+  }
   cards.forEach((c, i) => {
     const n = c.querySelector('.n'), l = c.querySelector('.l');
     if (!l.dataset.base) l.dataset.base = l.textContent;
     n.textContent = vals[i];
-    if (i === 0 || i === 2) n.classList.toggle('pos', vals[i] !== '—');
+    n.title = hint;
+    if (i === 0 || i === 2) n.classList.toggle('pos', /^\+/.test(vals[i]));
     l.textContent = l.dataset.base + ' · filtered';
   });
 }
