@@ -480,6 +480,18 @@ def _pct(v: float) -> str:
     return f"{v * 100:.2f}%"
 
 
+def _rate_pct(v: float) -> str:
+    """
+    Rate / 8h formatted with enough precision to never round to '0.00%'
+    for a genuinely nonzero rate — a rate that displays as zero next to a
+    finite breakeven-cycles figure reads as a contradiction (zero rate
+    should mean it never breaks even).
+    """
+    if v != 0 and abs(v * 100) < 0.005:
+        return f"{v * 100:.4f}%"
+    return _pct(v)
+
+
 _LIQ_LABELS = {"green": "LIQUID", "amber": "THIN", "red": "ILLIQUID"}
 
 
@@ -534,7 +546,7 @@ def _render_table_rows(results: list[dict], locked: list[dict] | None = None) ->
             f'</td>'
             f'<td><span class="sym-name">{r["symbol"]}</span></td>'
             f'<td><span class="exch-badge exch-{r["exchange"]}">{exch}</span></td>'
-            f'<td><span class="num">{_pct(r["rate_8h"])}</span></td>'
+            f'<td><span class="num">{_rate_pct(r["rate_8h"])}</span></td>'
             f'<td><span class="gross-strike">{gross_label}</span>'
             f'<span class="{net_cls}" style="font-weight:600">{net_label}</span></td>'
             f'<td>{_liquidity_badge(r)}</td>'
@@ -567,7 +579,7 @@ def _render_table_rows(results: list[dict], locked: list[dict] | None = None) ->
                 f'<td style="padding:.7rem .5rem .7rem .75rem"><span style="color:var(--mist)">☆</span></td>'
                 f'<td><span class="sym-name locked-blur">{r["symbol"]}</span></td>'
                 f'<td><span class="exch-badge exch-{r["exchange"]} locked-blur">{exch}</span></td>'
-                f'<td><span class="num locked-blur">{_pct(r["rate_8h"])}</span></td>'
+                f'<td><span class="num locked-blur">{_rate_pct(r["rate_8h"])}</span></td>'
                 f'<td><span class="gross-strike locked-blur">{gross_label}</span>'
                 f'<span class="num pos locked-blur" style="font-weight:600">{net_label}</span></td>'
                 f'<td class="locked-blur">{_liquidity_badge(r)}</td>'
