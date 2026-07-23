@@ -123,21 +123,41 @@ def size_opportunity(row: dict, position_size: float) -> dict:
     size, return a copy of the row with size-derived fields merged in:
         position_size, slippage_pct, net_apy_at_size,
         liquidity_pct, liquidity_flag
+
+    Venues that publish no order-book depth (e.g. CME via Yahoo) get
+    slippage_pct / net_apy_at_size of None — sizing there is unknowable,
+    not "unfillable", and a fabricated penalty must not render as a real
+    net yield.
     """
-    slippage_pct = entry_exit_slippage_pct(row.get("order_book"), position_size)
+    book = row.get("order_book") or {}
+    asks = [(p, q) for p, q in (book.get("asks") or []) if p > 0 and q > 0]
+    bids = [(p, q) for p, q in (book.get("bids") or []) if p > 0 and q > 0]
+    if asks and bids:
+        slippage_pct = entry_exit_slippage_pct(book, position_size)
+        net_at_size = fm.net_apy_at_size(row["rate_8h"], slippage_pct)
+    else:
+        slippage_pct = None
+        net_at_size = None
     liquidity_pct = liquidity_pct_of_volume(position_size, row.get("volume_24h_usd", 0))
     return {
         **row,
         "position_size": position_size,
         "slippage_pct": slippage_pct,
-        "net_apy_at_size": fm.net_apy_at_size(row["rate_8h"], slippage_pct),
+        "net_apy_at_size": net_at_size,
         "liquidity_pct": liquidity_pct,
         "liquidity_flag": liquidity_flag(liquidity_pct),
     }
 
 
 def rank_by_size(rows: list[dict], position_size: float) -> list[dict]:
-    """Apply size_opportunity to every row and re-sort by net_apy_at_size descending."""
+    """
+    Apply size_opportunity to every row and re-sort by net_apy_at_size
+    descending. Rows whose size-adjusted yield is unknowable (no depth
+    data) sink to the bottom rather than ranking on a fake number.
+    """
     sized = [size_opportunity(r, position_size) for r in rows]
-    sized.sort(key=lambda r: r["net_apy_at_size"], reverse=True)
+    sized.sort(
+        key=lambda r: r["net_apy_at_size"] if r["net_apy_at_size"] is not None else float("-inf"),
+        reverse=True,
+    )
     return sized

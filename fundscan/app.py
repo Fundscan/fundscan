@@ -503,12 +503,22 @@ def _render_table_rows(results: list[dict], locked: list[dict] | None = None) ->
     for r in results:
         # Headline metric is net-yield-at-size where available (sized rows
         # carry net_apy_at_size); falls back to the flat net_apy otherwise.
+        # None means the venue publishes no depth data (e.g. CME) — sizing
+        # is unknowable there, shown as n/a rather than a fake number.
         net_at_size = r.get("net_apy_at_size", r["net_apy"])
-        profitable = net_at_size > 0
-        row_cls = "data-row" if profitable else "data-row greyed"
-        net_cls = "num pos" if profitable else "num neg"
         gross_label = _pct(r["gross_apy"])
-        net_label = _pct(net_at_size)
+        if net_at_size is None:
+            row_cls = "data-row greyed"
+            net_cls = "num"
+            net_label = ('<span title="No order-book depth published for this venue — '
+                         'slippage at size cannot be estimated">n/a</span>')
+            sort_apy = -1e12  # sinks below every real number in client-side sort
+        else:
+            profitable = net_at_size > 0
+            row_cls = "data-row" if profitable else "data-row greyed"
+            net_cls = "num pos" if profitable else "num neg"
+            net_label = _pct(net_at_size)
+            sort_apy = net_at_size
         be = r["breakeven_cycles"]
         be_str = f"{be:.1f}" if be is not None else "∞"
         spark_key = f"{r['exchange']}:{r['symbol']}"
@@ -516,7 +526,7 @@ def _render_table_rows(results: list[dict], locked: list[dict] | None = None) ->
         exch = r["exchange"].upper()
         rows.append(
             f'<tr class="{row_cls}" data-symbol="{r["symbol"]}" data-exchange="{r["exchange"]}"'
-            f' data-apy="{net_at_size}" onclick="toggleChart(this)">'
+            f' data-apy="{sort_apy}" onclick="toggleChart(this)">'
             f'<td style="padding:.7rem .5rem .7rem .75rem" onclick="event.stopPropagation()">'
             f'<button class="star-btn" id="star-{safe_id}" '
             f'data-symbol="{r["symbol"]}" data-exchange="{r["exchange"]}" '
@@ -547,7 +557,7 @@ def _render_table_rows(results: list[dict], locked: list[dict] | None = None) ->
             exch = r["exchange"].upper()
             net_at_size = r.get("net_apy_at_size", r["net_apy"])
             gross_label = _pct(r["gross_apy"])
-            net_label = _pct(net_at_size)
+            net_label = "n/a" if net_at_size is None else _pct(net_at_size)
             be = r["breakeven_cycles"]
             be_str = f"{be:.1f}" if be is not None else "∞"
             rows.append(

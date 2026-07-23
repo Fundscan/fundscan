@@ -14,11 +14,10 @@ and is_profitable all fall out of that one number for free.
 
 Known limitation: Yahoo Finance's public data doesn't include CME order
 book depth, so these rows carry an empty order_book. sizing.py treats an
-empty book as unfillable (100% slippage per leg), so NQ/ES will show up
-looking illiquid/below-cost in the position-sized dashboard view even
-though CME futures are in reality some of the deepest markets there are.
-Fine for the flat rate_8h/net_apy/CSV/API views; misleading for the
-sized view until a real depth feed is wired in.
+empty book as unknowable — net_apy_at_size comes back None and the sized
+dashboard view shows "n/a" (ranked last) instead of a fabricated slippage
+penalty. The flat rate_8h/net_apy/CSV/API views are unaffected. A real
+depth feed is needed before these rows can be sized honestly.
 """
 import logging
 from datetime import date
