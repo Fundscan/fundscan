@@ -172,6 +172,10 @@ tbody tr.greyed td{opacity:.55}
 tr.chart-row td{padding:.5rem 1rem 1.25rem;background:rgba(15,27,48,.4);border-bottom:1px solid var(--hairline)}
 .chart-inner{background:linear-gradient(180deg,var(--navy-2),rgba(15,27,48,.5));
              border:1px solid var(--hairline);border-radius:6px;padding:1rem 1rem .5rem}
+/* Fixed-height box so Chart.js always renders the same size regardless of
+   when the row was (re)built — without it the chart height depends on layout
+   timing and the same data can draw tall or squashed. */
+.chart-canvas-box{position:relative;height:230px}
 .accuracy-line{font-family:var(--mono);font-size:11px;letter-spacing:.02em;color:var(--soft);
                margin-bottom:.75rem}
 .note{font-family:var(--mono);font-size:11px;color:var(--mist);margin-top:1.25rem;
@@ -440,7 +444,8 @@ async function toggleChart(row) {
       datasets:[{ label:'Net APY %', data:pts.map(p=>+(p.net_apy*100).toFixed(3)),
         borderColor:'#C9A551', backgroundColor:'rgba(201,165,81,.06)',
         borderWidth:1.5, pointRadius:2, pointBackgroundColor:'#C9A551', tension:.3, fill:true }] },
-    options:{ animation:false, plugins:{legend:{display:false}},
+    options:{ animation:false, responsive:true, maintainAspectRatio:false,
+      plugins:{legend:{display:false}},
       scales:{
         x:{ticks:{color:'#67748A',maxTicksLimit:6,font:{family:"'IBM Plex Mono'",size:10}},grid:{color:'rgba(167,178,196,.07)'}},
         y:{ticks:{color:'#67748A',callback:v=>v+'%',font:{family:"'IBM Plex Mono'",size:10}},grid:{color:'rgba(167,178,196,.07)'}}
