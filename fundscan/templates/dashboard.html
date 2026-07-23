@@ -176,6 +176,9 @@ tr.chart-row td{padding:.5rem 1rem 1.25rem;background:rgba(15,27,48,.4);border-b
    when the row was (re)built — without it the chart height depends on layout
    timing and the same data can draw tall or squashed. */
 .chart-canvas-box{position:relative;height:230px}
+/* Absolute canvas contributes no layout width, so Chart.js can never widen
+   the table cell and push later columns off-screen (resize feedback loop). */
+.chart-canvas-box canvas{position:absolute;inset:0;width:100%!important;height:100%!important}
 .accuracy-line{font-family:var(--mono);font-size:11px;letter-spacing:.02em;color:var(--soft);
                margin-bottom:.75rem}
 .note{font-family:var(--mono);font-size:11px;color:var(--mist);margin-top:1.25rem;
