@@ -120,6 +120,31 @@ def health():
 SITE_URL = "https://fundscan.uk"
 
 
+def _fee_model_context() -> dict:
+    """
+    Shared fee-model context for every page/endpoint that discloses cost
+    assumptions -- one place computing the numbers so template copy can
+    never drift out of sync with fundscan/math.py's actual per-venue table.
+    """
+    per_venue = {
+        venue: {
+            "fee_per_leg_pct": fee * 100,
+            "round_trip_pct": (fee * fm.LEGS + fm.SLIPPAGE) * 100,
+        }
+        for venue, fee in fm.PER_VENUE_FEE_PER_LEG.items()
+    }
+    round_trips = [v["round_trip_pct"] for v in per_venue.values()]
+    return {
+        "legs": fm.LEGS,
+        "slippage_pct": fm.SLIPPAGE * 100,
+        "per_venue_fee": per_venue,
+        "min_round_trip_pct": min(round_trips),
+        "max_round_trip_pct": max(round_trips),
+        "default_fee_per_leg_pct": fm.FEE_PER_LEG * 100,
+        "default_round_trip_pct": fm.TOTAL_ROUND_TRIP_COST * 100,
+    }
+
+
 @app.get("/rates", response_class=HTMLResponse)
 def public_rates(request: Request):
     """
@@ -143,10 +168,7 @@ def public_rates(request: Request):
             "pairs_count": len(results),
             "fetched_at": _state["last_fetch_at"],
             "site_url": SITE_URL,
-            "fee_per_leg_pct": fm.FEE_PER_LEG * 100,
-            "legs": fm.LEGS,
-            "slippage_pct": fm.SLIPPAGE * 100,
-            "total_round_trip_pct": fm.TOTAL_ROUND_TRIP_COST * 100,
+            **_fee_model_context(),
         },
     )
 
@@ -201,10 +223,15 @@ def rate_detail(request: Request, symbol: str):
         "symbol": symbol,
         "exchanges": matches,
         "fee_model": {
-            "fee_per_leg": fm.FEE_PER_LEG,
             "legs": fm.LEGS,
             "slippage": fm.SLIPPAGE,
-            "total_round_trip_cost": fm.TOTAL_ROUND_TRIP_COST,
+            "per_venue_fee_per_leg": fm.PER_VENUE_FEE_PER_LEG,
+            "default_fee_per_leg": fm.FEE_PER_LEG,
+            "note": (
+                "fee_per_leg is looked up per venue from per_venue_fee_per_leg; "
+                "a venue absent from that table (e.g. CME, a basis trade with a "
+                "different commission model) falls back to default_fee_per_leg."
+            ),
         },
     }
 
@@ -251,10 +278,12 @@ def api_v1_rates(request: Request):
         "count": len(results),
         "missing_on_free_tier": len(locked),
         "fee_model": {
-            "fee_per_leg_pct": fm.FEE_PER_LEG * 100,
             "legs": fm.LEGS,
             "slippage_pct": fm.SLIPPAGE * 100,
-            "total_round_trip_pct": fm.TOTAL_ROUND_TRIP_COST * 100,
+            "per_venue_fee_per_leg_pct": {v: f * 100 for v, f in fm.PER_VENUE_FEE_PER_LEG.items()},
+            "default_fee_per_leg_pct": fm.FEE_PER_LEG * 100,
+            "note": "net_apy per opportunity already reflects its own venue's real fee; "
+                    "a venue absent from per_venue_fee_per_leg_pct (e.g. CME) uses default_fee_per_leg_pct.",
         },
         "opportunities": [
             {
@@ -692,6 +721,7 @@ def dashboard(request: Request):
             "exchanges": exchanges,
             "position_sizes": sizing.POSITION_SIZES,
             "default_position_size": sizing.DEFAULT_POSITION_SIZE,
+            **_fee_model_context(),
         },
     )
 

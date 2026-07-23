@@ -47,13 +47,14 @@ def scan() -> list[dict]:
     enriched = []
     for row in raw:
         rate = row["rate_8h"]
-        be = fm.breakeven_cycles(rate)
+        exchange = row["exchange"]
+        be = fm.breakeven_cycles(rate, exchange)
         enriched.append({
             **row,
             "gross_apy": fm.annualised_gross(rate),
-            "net_apy": fm.net_apy(rate),
+            "net_apy": fm.net_apy(rate, exchange),
             "breakeven_cycles": round(be, 1) if be is not None else None,
-            "is_profitable": fm.is_profitable(rate),
+            "is_profitable": fm.is_profitable(rate, exchange),
             "fetched_at": fetched_at,
         })
 

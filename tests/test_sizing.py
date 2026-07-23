@@ -157,16 +157,17 @@ def test_size_opportunity_merges_expected_fields():
     assert out["exchange"] == "bybit"  # original fields preserved
     assert out["position_size"] == 1000
     assert out["liquidity_flag"] == "green"
-    expected_net = fm.net_apy_at_size(0.0002, out["slippage_pct"])
+    expected_net = fm.net_apy_at_size(0.0002, out["slippage_pct"], "bybit")
     assert out["net_apy_at_size"] == pytest.approx(expected_net)
 
 
 def test_size_opportunity_uses_fee_model_constants_not_a_duplicate():
-    # net_apy_at_size must equal gross - round_trip_fee_cost - slippage,
-    # sourced from the same FEE_PER_LEG/LEGS constants as math.net_apy().
-    row = {"rate_8h": 0.0001, "order_book": DEEP_BOOK, "volume_24h_usd": 10_000_000}
+    # net_apy_at_size must equal gross - round_trip_fee_cost(exchange) -
+    # slippage, sourced from the same per-venue table as math.net_apy().
+    row = {"rate_8h": 0.0001, "order_book": DEEP_BOOK, "volume_24h_usd": 10_000_000,
+           "exchange": "hyperliquid", "symbol": "BTC-PERP"}
     out = size_opportunity(row, 1000)
-    expected = fm.annualised_gross(0.0001) - fm.round_trip_fee_cost() - out["slippage_pct"]
+    expected = fm.annualised_gross(0.0001) - fm.round_trip_fee_cost("hyperliquid") - out["slippage_pct"]
     assert out["net_apy_at_size"] == pytest.approx(expected)
 
 

@@ -194,11 +194,14 @@ footer a{color:var(--gold);text-decoration:none}
   </div>
 
   <p class="fee-note">
-    Net APY = gross annualised funding rate − {{ "%.2f"|format(total_round_trip_pct) }}% round-trip
-    execution cost ({{ legs }} legs × {{ "%.2f"|format(fee_per_leg_pct) }}% taker fee
-    + {{ "%.2f"|format(slippage_pct) }}% slippage provision). Breakeven cycles is the number of
-    8-hour funding settlements required to recover that cost. Figures are estimates derived from
-    public exchange data and a standardised cost model — not a projection of future returns.
+    Net APY = gross annualised funding rate − real per-venue round-trip execution cost
+    ({{ legs }} legs at each exchange's own published taker rate + {{ "%.2f"|format(slippage_pct) }}%
+    slippage provision, {{ "%.2f"|format(min_round_trip_pct) }}–{{ "%.2f"|format(max_round_trip_pct) }}%
+    total depending on venue). CME uses a {{ "%.2f"|format(default_round_trip_pct) }}% placeholder,
+    since it charges a per-contract commission rather than a %-of-notional taker fee. Breakeven
+    cycles is the number of 8-hour funding settlements required to recover that cost. Figures are
+    estimates derived from public exchange data and a standardised cost model — not a projection
+    of future returns.
   </p>
 
   <div class="cta-band">

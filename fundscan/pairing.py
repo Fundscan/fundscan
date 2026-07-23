@@ -6,9 +6,12 @@ this pairs the SAME base asset's perpetual contract across two exchanges
 and computes the funding-rate spread trade — short the richer venue, long
 the cheaper one — which is delta-neutral without holding spot at all.
 
-Extends math.py (annualised_gross, net_apy, round_trip_fee_cost,
-net_apy_at_size) and sizing.py (entry_exit_slippage_pct,
+Extends math.py (annualised_gross, round_trip_fee_cost_two_venue,
+net_apy_at_size_two_venue) and sizing.py (entry_exit_slippage_pct,
 liquidity_pct_of_volume, liquidity_flag) rather than duplicating either.
+Uses the two-venue cost helpers, not net_apy()/net_apy_at_size(), because
+a spread genuinely touches two exchanges' fee schedules (open+close on
+each), not one.
 
 Scope note: all four venues only ever contribute linear, USDT/USDC-margined
 perpetuals (Bybit queries category=linear, Binance's /fapi/v1 is USD-M,
@@ -92,6 +95,13 @@ def build_pairs(rows: list[dict]) -> list[dict]:
                 continue
             short_leg, long_leg = (a, b) if a["rate_8h"] >= b["rate_8h"] else (b, a)
             spread_rate_8h = short_leg["rate_8h"] - long_leg["rate_8h"]
+            # Two venues are actually touched here (open+close on each), so
+            # the fee cost uses each venue's own real rate rather than a
+            # single-exchange net_apy() call.
+            spread_cost = fm.round_trip_fee_cost_two_venue(
+                short_leg["exchange"], long_leg["exchange"]
+            ) + fm.SLIPPAGE
+            spread_net_apy = fm.annualised_gross(spread_rate_8h) - spread_cost
             pairs.append({
                 "asset": asset,
                 "short_exchange": short_leg["exchange"],
@@ -100,8 +110,8 @@ def build_pairs(rows: list[dict]) -> list[dict]:
                 "long_symbol": long_leg["symbol"],
                 "spread_rate_8h": spread_rate_8h,
                 "gross_apy": fm.annualised_gross(spread_rate_8h),
-                "net_apy": fm.net_apy(spread_rate_8h),
-                "is_profitable": fm.is_profitable(spread_rate_8h),
+                "net_apy": spread_net_apy,
+                "is_profitable": spread_net_apy > 0,
                 # Internal-only refs for sizing; stripped before rendering.
                 "_short_row": short_leg,
                 "_long_row": long_leg,
@@ -130,7 +140,9 @@ def size_pair_opportunity(pair: dict, position_size: float) -> dict:
     out.update({
         "position_size": position_size,
         "slippage_pct": slippage_pct,
-        "net_apy_at_size": fm.net_apy_at_size(pair["spread_rate_8h"], slippage_pct),
+        "net_apy_at_size": fm.net_apy_at_size_two_venue(
+            pair["spread_rate_8h"], slippage_pct, pair["short_exchange"], pair["long_exchange"]
+        ),
         "liquidity_pct": liquidity_pct,
         "liquidity_flag": sz.liquidity_flag(liquidity_pct),
     })

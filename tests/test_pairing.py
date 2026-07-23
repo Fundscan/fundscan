@@ -115,8 +115,12 @@ def test_build_pairs_uses_gross_and_net_apy_from_math_module():
         make_row("binance", "BTCUSDT", 0.0001),
     ]
     pair = build_pairs(rows)[0]
+    # A spread genuinely touches both venues' fee schedules (open+close on
+    # each), so the expected cost uses the two-venue helper, not the
+    # single-exchange fm.net_apy().
+    expected_cost = fm.round_trip_fee_cost_two_venue("bybit", "binance") + fm.SLIPPAGE
     assert pair["gross_apy"] == pytest.approx(fm.annualised_gross(0.0004))
-    assert pair["net_apy"] == pytest.approx(fm.net_apy(0.0004))
+    assert pair["net_apy"] == pytest.approx(fm.annualised_gross(0.0004) - expected_cost)
 
 
 # ---------------------------------------------------------------------------
@@ -135,7 +139,7 @@ def test_size_pair_opportunity_sums_slippage_across_both_legs():
     )
     assert out["slippage_pct"] == pytest.approx(expected_slippage)
     assert out["net_apy_at_size"] == pytest.approx(
-        fm.net_apy_at_size(pair["spread_rate_8h"], expected_slippage)
+        fm.net_apy_at_size_two_venue(pair["spread_rate_8h"], expected_slippage, "bybit", "binance")
     )
 
 

@@ -191,3 +191,47 @@ def test_scan_drops_low_volume_rows():
     symbols = {r["symbol"] for r in results}
     assert "LIQUIDUSDT" in symbols
     assert "THINUSDT" not in symbols
+
+
+# ---------------------------------------------------------------------------
+# Per-venue fee model
+# ---------------------------------------------------------------------------
+
+def test_per_venue_fees_differ_from_each_other():
+    """
+    Venues with different published fees produce different net_apy for the
+    identical rate -- proof the model isn't silently falling back to one
+    flat number for every exchange. (Binance/OKX/Kraken genuinely share the
+    same 0.05% rate, so not every pair differs -- but the set as a whole
+    must contain more than one distinct value, and the cheapest/priciest
+    venues must rank as such.)
+    """
+    from fundscan.math import PER_VENUE_FEE_PER_LEG
+
+    rate = 0.001
+    results = {venue: net_apy(rate, venue) for venue in PER_VENUE_FEE_PER_LEG}
+    assert len(set(results.values())) > 1, "expected more than one distinct net_apy across venues"
+    # Cheapest venue (Hyperliquid, 0.045%/leg) yields the highest net_apy;
+    # priciest (Bybit, 0.055%/leg) yields the lowest.
+    assert max(results, key=results.get) == "hyperliquid"
+    assert min(results, key=results.get) == "bybit"
+
+
+def test_unknown_venue_falls_back_to_flat_default():
+    """CME (or any venue absent from the per-venue table) keeps the old
+    flat conservative fee model rather than erroring or getting a free ride."""
+    assert net_apy(0.001, "cme") == pytest.approx(net_apy(0.001, None))
+    assert net_apy(0.001, "cme") == pytest.approx(net_apy(0.001))  # exchange still optional
+
+
+def test_per_venue_fees_are_all_cheaper_than_old_flat_default():
+    """
+    Sanity guard on the actual numbers on file: every real venue this app
+    scans charges less than the old flat 0.26%/leg placeholder -- if this
+    ever fails, the table was edited to something worse than the fallback,
+    which would be a regression in the wrong direction.
+    """
+    from fundscan.math import PER_VENUE_FEE_PER_LEG, FEE_PER_LEG
+
+    for venue, fee in PER_VENUE_FEE_PER_LEG.items():
+        assert fee < FEE_PER_LEG, f"{venue}'s fee ({fee}) is not cheaper than the flat default"

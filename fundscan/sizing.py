@@ -134,7 +134,7 @@ def size_opportunity(row: dict, position_size: float) -> dict:
     bids = [(p, q) for p, q in (book.get("bids") or []) if p > 0 and q > 0]
     if asks and bids:
         slippage_pct = entry_exit_slippage_pct(book, position_size)
-        net_at_size = fm.net_apy_at_size(row["rate_8h"], slippage_pct)
+        net_at_size = fm.net_apy_at_size(row["rate_8h"], slippage_pct, row["exchange"])
     else:
         slippage_pct = None
         net_at_size = None
