@@ -216,11 +216,6 @@ tr.chart-row td{padding:.5rem 1rem 1.25rem;background:rgba(15,27,48,.4);border-b
     </svg>
     <span class="logo-word">FundScan<i>.</i></span>
   </a>
-  <div class="nav-links">
-    {% for key, label in reference_categories %}
-    <a href="/app/markets/{{ key }}">{{ label }}</a>
-    {% endfor %}
-  </div>
   <div class="nav-right">
     <span class="live-badge" id="status-bar"
           hx-get="/htmx/status" hx-trigger="every 30s" hx-swap="outerHTML">LIVE</span>
