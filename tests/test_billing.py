@@ -63,6 +63,56 @@ def test_checkout_completed_sets_pro():
 
 
 # ---------------------------------------------------------------------------
+# checkout.session.completed with metadata.tier=analyst → tier = analyst
+# ---------------------------------------------------------------------------
+
+def test_checkout_completed_with_analyst_metadata_sets_analyst():
+    from fundscan.billing import handle_webhook
+    from fundscan.auth import get_or_create_user, set_user_tier, get_user_by_id
+
+    set_user_tier("subscriber@example.com", "free")
+    user = get_or_create_user("subscriber@example.com")
+
+    event = _make_event("checkout.session.completed", {
+        "client_reference_id": "subscriber@example.com",
+        "customer_email": "subscriber@example.com",
+        "metadata": {"tier": "analyst"},
+    })
+
+    with patch("fundscan.billing.notify_new_signup"):
+        with patch("fundscan.billing.log_webhook_event"):
+            handle_webhook(event)
+
+    updated = get_user_by_id(user["id"])
+    assert updated["tier"] == "analyst"
+
+    set_user_tier("subscriber@example.com", "free")  # reset for later tests
+
+
+def test_checkout_completed_unknown_metadata_tier_defaults_to_pro():
+    from fundscan.billing import handle_webhook
+    from fundscan.auth import get_or_create_user, set_user_tier, get_user_by_id
+
+    set_user_tier("subscriber@example.com", "free")
+    user = get_or_create_user("subscriber@example.com")
+
+    event = _make_event("checkout.session.completed", {
+        "client_reference_id": "subscriber@example.com",
+        "customer_email": "subscriber@example.com",
+        "metadata": {"tier": "not-a-real-tier"},
+    })
+
+    with patch("fundscan.billing.notify_new_signup"):
+        with patch("fundscan.billing.log_webhook_event"):
+            handle_webhook(event)
+
+    updated = get_user_by_id(user["id"])
+    assert updated["tier"] == "pro"
+
+    set_user_tier("subscriber@example.com", "free")  # reset for later tests
+
+
+# ---------------------------------------------------------------------------
 # customer.subscription.deleted → tier = free
 # ---------------------------------------------------------------------------
 

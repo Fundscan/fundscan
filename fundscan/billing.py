@@ -2,12 +2,17 @@
 Stripe billing integration.
 
 CONFIG REQUIRED (set in .env):
-  STRIPE_SECRET_KEY     — from Stripe dashboard → Developers → API keys
-  STRIPE_PRICE_ID       — the price ID for the £20/month Pro plan (price_xxx)
-  STRIPE_WEBHOOK_SECRET — from Stripe dashboard → Webhooks → signing secret (whsec_xxx)
+  STRIPE_SECRET_KEY       — from Stripe dashboard → Developers → API keys
+  STRIPE_PRICE_ID         — the price ID for the £20/month Pro plan (price_xxx)
+  STRIPE_ANALYST_PRICE_ID — the price ID for the cheaper Analyst plan (price_xxx)
+  STRIPE_WEBHOOK_SECRET   — from Stripe dashboard → Webhooks → signing secret (whsec_xxx)
+
+Each checkout session is tagged with metadata={"tier": ...} at creation time
+so the webhook knows which tier to grant without having to reverse-map a
+price ID -- that keeps handle_webhook agnostic to which prices exist.
 
 Webhook events handled:
-  checkout.session.completed     → set user tier = pro
+  checkout.session.completed     → set user tier = metadata.tier (default 'pro')
   customer.subscription.deleted  → set user tier = free
   invoice.payment_failed         → log warning
 """
@@ -26,7 +31,16 @@ log = logging.getLogger(__name__)
 
 STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY") or os.getenv("SECRET_KEY", "")
 STRIPE_PRICE_ID = os.getenv("STRIPE_PRICE_ID", "")
+STRIPE_ANALYST_PRICE_ID = os.getenv("STRIPE_ANALYST_PRICE_ID", "")
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")
+
+TIER_PRICE_IDS = {"analyst": STRIPE_ANALYST_PRICE_ID, "pro": STRIPE_PRICE_ID}
+
+
+def _price_id_for(tier: str) -> str:
+    if tier not in TIER_PRICE_IDS:
+        raise ValueError(f"Unknown billing tier: {tier}")
+    return TIER_PRICE_IDS[tier]
 
 
 def portal_url(email: str, return_url: str) -> str:
@@ -48,9 +62,9 @@ def portal_url(email: str, return_url: str) -> str:
     return session.url
 
 
-def checkout_url(email: str) -> str:
+def checkout_url(email: str, tier: str = "pro") -> str:
     """
-    Create a Stripe Checkout Session for a £20/month subscription.
+    Create a Stripe Checkout Session for a subscription at the given tier.
     Returns the hosted checkout URL (legacy – used as fallback).
     """
     stripe.api_key = STRIPE_SECRET_KEY
@@ -58,16 +72,17 @@ def checkout_url(email: str) -> str:
         mode="subscription",
         customer_email=email,
         client_reference_id=email,
-        line_items=[{"price": STRIPE_PRICE_ID, "quantity": 1}],
+        line_items=[{"price": _price_id_for(tier), "quantity": 1}],
+        metadata={"tier": tier},
         success_url=f"{os.getenv('BASE_URL', 'http://localhost:8000')}/account?upgraded=1",
         cancel_url=f"{os.getenv('BASE_URL', 'http://localhost:8000')}/billing/checkout",
     )
     return session.url
 
 
-def create_embedded_session(email: str) -> str:
+def create_embedded_session(email: str, tier: str = "pro") -> str:
     """
-    Create a Stripe Checkout Session in embedded mode.
+    Create a Stripe Checkout Session in embedded mode for the given tier.
     Returns client_secret for Stripe.js initEmbeddedCheckout().
     """
     stripe.api_key = STRIPE_SECRET_KEY
@@ -77,8 +92,9 @@ def create_embedded_session(email: str) -> str:
         ui_mode="embedded_page",
         customer_email=email,
         client_reference_id=email,
-        line_items=[{"price": STRIPE_PRICE_ID, "quantity": 1}],
-        return_url=f"{base}/billing/return?session_id={{CHECKOUT_SESSION_ID}}",
+        line_items=[{"price": _price_id_for(tier), "quantity": 1}],
+        metadata={"tier": tier},
+        return_url=f"{base}/billing/return?session_id={{CHECKOUT_SESSION_ID}}&tier={tier}",
     )
     return session.client_secret
 
@@ -109,10 +125,15 @@ def handle_webhook(event: stripe.Event) -> None:
         obj = event["data"]["object"]
         # client_reference_id is the email we set at checkout creation
         email = obj.get("client_reference_id") or obj.get("customer_email")
+        # Sessions created before the Analyst tier existed carry no metadata;
+        # default to 'pro' so those keep working unchanged.
+        tier = (obj.get("metadata") or {}).get("tier", "pro")
+        if tier not in ("analyst", "pro"):
+            tier = "pro"
         if email:
-            set_user_tier(email, "pro")
+            set_user_tier(email, tier)
             notify_new_signup(email)
-            log.info("checkout.session.completed → %s tier=pro", email)
+            log.info("checkout.session.completed → %s tier=%s", email, tier)
         else:
             log.warning("checkout.session.completed missing email, event id=%s", event["id"])
 

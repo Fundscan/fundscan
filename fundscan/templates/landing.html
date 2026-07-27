@@ -188,8 +188,8 @@ h2{font-family:var(--serif);font-size:clamp(28px,3.6vw,46px);letter-spacing:-.01
 .proc p{color:var(--soft);font-size:15.5px}
 
 /* ---------- pricing ---------- */
-.plans{display:grid;grid-template-columns:1fr 1fr;gap:32px;margin-top:56px;max-width:860px;align-items:stretch;margin-left:auto;margin-right:auto}
-.plan{border:1px solid var(--hairline);border-radius:12px;padding:44px 40px;
+.plans{display:grid;grid-template-columns:repeat(3,1fr);gap:28px;margin-top:56px;max-width:1080px;align-items:stretch;margin-left:auto;margin-right:auto}
+.plan{border:1px solid var(--hairline);border-radius:12px;padding:36px 30px;
   background:linear-gradient(160deg,var(--navy-2) 0%,var(--navy) 100%);
   transition:transform .35s,box-shadow .35s;position:relative;overflow:hidden;
   display:flex;flex-direction:column}
@@ -209,7 +209,7 @@ h2{font-family:var(--serif);font-size:clamp(28px,3.6vw,46px);letter-spacing:-.01
 .plan .plabel{font-family:var(--mono);font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:var(--mist);margin-bottom:10px}
 .plan.pro .plabel{color:var(--gold)}
 .plan h3{font-family:var(--serif);font-size:26px;font-weight:600}
-.price{font-family:var(--serif);font-size:52px;font-weight:500;margin:20px 0 4px;letter-spacing:-.03em;line-height:1}
+.price{font-family:var(--serif);font-size:44px;font-weight:500;margin:20px 0 4px;letter-spacing:-.03em;line-height:1}
 .price small{font-family:var(--sans);font-size:14px;color:var(--mist);font-weight:400;letter-spacing:0}
 .plan-divider{border:none;border-top:1px solid var(--hairline);margin:28px 0}
 .plan ul{list-style:none;margin:0 0 36px;display:flex;flex-direction:column;gap:14px;font-size:15.5px;color:var(--soft);flex:1}
@@ -408,8 +408,25 @@ footer{border-top:1px solid var(--hairline);background:rgba(15,27,48,.5)}
         <li class="off">Historical rate series</li>
       </ul>
       <a href="/auth/request" class="btn" style="width:100%;text-align:center">Begin for free</a>
+      <p style="text-align:center;margin-top:14px;font-size:13px;color:var(--mist)">
+        Not sure yet? <a href="/trial/start" style="color:var(--gold)">Try the complete list free for 7 days</a> — no card required.
+      </p>
     </div>
-    <div class="plan pro rv rv-d2">
+    <div class="plan rv rv-d2">
+      <div class="plabel">Full coverage</div>
+      <h3>Analyst</h3>
+      <div class="price">£8<small> / month</small></div>
+      <hr class="plan-divider">
+      <ul>
+        <li>Complete coverage, live, all venues</li>
+        <li>Full cost and breakeven methodology</li>
+        <li class="off">Threshold notifications</li>
+        <li class="off">Seven-day rate history per instrument</li>
+        <li class="off">CSV export</li>
+      </ul>
+      <a href="/billing/checkout?tier=analyst" class="btn" style="width:100%;text-align:center">Subscribe — £8/mo</a>
+    </div>
+    <div class="plan pro rv rv-d3">
       <div class="plan-badge">Recommended</div>
       <div class="plabel">Full service</div>
       <h3>Principal</h3>
@@ -419,10 +436,10 @@ footer{border-top:1px solid var(--hairline);background:rgba(15,27,48,.5)}
         <li>Complete coverage, live, all venues</li>
         <li>Telegram notifications on your thresholds</li>
         <li>Seven-day rate history per instrument</li>
-        <li>Illiquidity flags on statistical outliers</li>
+        <li>CSV export</li>
         <li>Cancel any time, no notice period</li>
       </ul>
-      <a href="/billing/checkout" class="btn btn-solid" style="width:100%;text-align:center">Subscribe — £20/mo</a>
+      <a href="/billing/checkout?tier=pro" class="btn btn-solid" style="width:100%;text-align:center">Subscribe — £20/mo</a>
     </div>
   </div>
 </section>

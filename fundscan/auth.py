@@ -83,9 +83,64 @@ def get_user_by_id(user_id: int) -> Optional[dict]:
 
 
 def set_user_tier(email: str, tier: str) -> None:
-    assert tier in ("free", "pro")
+    assert tier in ("free", "analyst", "pro")
     with get_conn() as conn:
         conn.execute("UPDATE users SET tier = ? WHERE email = ?", (tier, email))
+
+
+# ---------------------------------------------------------------------------
+# No-card trial
+# ---------------------------------------------------------------------------
+
+TRIAL_DAYS = 7
+
+
+def is_trial_active(user: dict) -> bool:
+    expires_at = user.get("trial_expires_at")
+    if not expires_at:
+        return False
+    return datetime.now(timezone.utc) < datetime.fromisoformat(expires_at)
+
+
+def trial_days_left(user: dict) -> Optional[int]:
+    """Whole days remaining in an active trial, or None if no trial is active."""
+    if not is_trial_active(user):
+        return None
+    expires_at = datetime.fromisoformat(user["trial_expires_at"])
+    remaining = expires_at - datetime.now(timezone.utc)
+    return max(0, remaining.days + (1 if remaining.seconds > 0 else 0))
+
+
+def effective_tier(user: dict) -> str:
+    """
+    The tier to use for feature-gating -- distinct from the stored billing
+    tier (users.tier) because an active trial grants 'analyst'-level access
+    without changing what the user is actually billed for.
+    """
+    if user["tier"] == "pro":
+        return "pro"
+    if is_trial_active(user):
+        return "analyst"
+    return user["tier"]
+
+
+def start_trial(email: str) -> bool:
+    """
+    Start a one-time, no-card, TRIAL_DAYS-day trial granting 'analyst'-level
+    access. Returns False (no-op) if the user already has billed access
+    (analyst/pro) or has already started a trial before, whether or not
+    it's still active -- trials are single-use per account.
+    """
+    user = get_or_create_user(email)
+    if user["tier"] != "free" or user.get("trial_expires_at"):
+        return False
+    expires_at = (datetime.now(timezone.utc) + timedelta(days=TRIAL_DAYS)).isoformat()
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE users SET trial_expires_at = ? WHERE email = ?",
+            (expires_at, email),
+        )
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -163,8 +218,9 @@ def _dispatch_email(to: str, subject: str, text: str) -> None:
         log.warning("DEV — no email provider configured, skipping email to %s", to)
 
 
-def send_magic_link(email: str, token: str) -> None:
-    link = f"{BASE_URL}/auth/verify?token={token}"
+def send_magic_link(email: str, token: str, next_path: str = "/app") -> None:
+    from urllib.parse import quote
+    link = f"{BASE_URL}/auth/verify?token={token}&next={quote(next_path, safe='')}"
     try:
         _dispatch_email(
             to=email,

@@ -34,7 +34,7 @@ CREATE INDEX IF NOT EXISTS idx_snapshots_symbol_ts
 CREATE TABLE IF NOT EXISTS users (
     id          INTEGER PRIMARY KEY,
     email       TEXT    NOT NULL UNIQUE,
-    tier        TEXT    NOT NULL DEFAULT 'free',   -- 'free' | 'pro'
+    tier        TEXT    NOT NULL DEFAULT 'free',   -- 'free' | 'analyst' | 'pro'
     created_at  TEXT    NOT NULL
 );
 
@@ -104,12 +104,22 @@ def get_conn():
         conn.close()
 
 
+def _ensure_column(conn: sqlite3.Connection, table: str, column: str, coltype: str) -> None:
+    """Add `column` to `table` if it's missing -- for columns added after a DB
+    already existed in production, since CREATE TABLE IF NOT EXISTS won't
+    alter an existing table's schema."""
+    cols = {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+    if column not in cols:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {coltype}")
+
+
 def init_db(path: Optional[Path] = None) -> None:
     global DB_PATH
     if path:
         DB_PATH = path
     with get_conn() as conn:
         conn.executescript(DDL)
+        _ensure_column(conn, "users", "trial_expires_at", "TEXT")  # NULL = no trial started
     log.info("DB initialised at %s", DB_PATH)
 
 

@@ -134,3 +134,71 @@ def test_wrong_key_returns_none():
     bad_cookie = other_signer.dumps({"uid": 999})
     auth = _auth()
     assert auth.decode_session_cookie(bad_cookie) is None
+
+
+# ---------------------------------------------------------------------------
+# Tiers + no-card trial
+# ---------------------------------------------------------------------------
+
+def test_set_user_tier_accepts_analyst():
+    auth = _auth()
+    auth.get_or_create_user("analyst-tier@example.com")
+    auth.set_user_tier("analyst-tier@example.com", "analyst")
+    updated = auth.get_user_by_id(
+        auth.get_or_create_user("analyst-tier@example.com")["id"]
+    )
+    assert updated["tier"] == "analyst"
+
+
+def test_start_trial_grants_analyst_effective_tier():
+    auth = _auth()
+    auth.get_or_create_user("trial1@example.com")
+    started = auth.start_trial("trial1@example.com")
+    assert started is True
+
+    user = auth.get_or_create_user("trial1@example.com")
+    assert user["tier"] == "free"  # billing tier unchanged
+    assert auth.is_trial_active(user) is True
+    assert auth.effective_tier(user) == "analyst"
+    assert auth.trial_days_left(user) in (6, 7)  # inclusive of "today"
+
+
+def test_start_trial_is_single_use():
+    auth = _auth()
+    auth.get_or_create_user("trial2@example.com")
+    assert auth.start_trial("trial2@example.com") is True
+    assert auth.start_trial("trial2@example.com") is False  # already started
+
+
+def test_start_trial_refused_for_paid_users():
+    auth = _auth()
+    auth.get_or_create_user("trial3@example.com")
+    auth.set_user_tier("trial3@example.com", "analyst")
+    assert auth.start_trial("trial3@example.com") is False
+
+
+def test_expired_trial_effective_tier_falls_back_to_free():
+    auth = _auth()
+    import fundscan.db as db_mod
+    auth.get_or_create_user("trial4@example.com")
+    auth.start_trial("trial4@example.com")
+
+    past = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+    with db_mod.get_conn() as conn:
+        conn.execute(
+            "UPDATE users SET trial_expires_at = ? WHERE email = ?",
+            (past, "trial4@example.com"),
+        )
+
+    user = auth.get_or_create_user("trial4@example.com")
+    assert auth.is_trial_active(user) is False
+    assert auth.effective_tier(user) == "free"
+    assert auth.trial_days_left(user) is None
+
+
+def test_pro_effective_tier_ignores_trial_state():
+    auth = _auth()
+    auth.get_or_create_user("trial5@example.com")
+    auth.set_user_tier("trial5@example.com", "pro")
+    user = auth.get_or_create_user("trial5@example.com")
+    assert auth.effective_tier(user) == "pro"

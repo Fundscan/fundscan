@@ -14,8 +14,10 @@ from typing import Optional
 
 import asyncio
 import csv
+import html
 import io
 import traceback
+from urllib.parse import quote
 
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse, StreamingResponse, Response
@@ -40,10 +42,13 @@ from .auth import (
     consume_magic_token,
     create_magic_token,
     decode_session_cookie,
+    effective_tier,
     get_or_create_user,
     get_user_by_id,
     make_session_cookie,
     send_magic_link,
+    start_trial,
+    trial_days_left,
 )
 
 log = logging.getLogger(__name__)
@@ -357,10 +362,10 @@ def api_signals_kraken(x_fundscan_token: str = Header(default=None)):
 @app.get("/export/rates.csv")
 def export_rates_csv(request: Request):
     """
-    Download current rates as CSV. Pro: full live list. Free: top 5, delayed.
+    Download current rates as CSV. Pro: full live list. Free/Analyst: top 25.
     """
     user = _current_user(request)
-    results, _locked = _tier_results(user)
+    results = _csv_results(user)
 
     buf = io.StringIO()
     writer = csv.writer(buf)
@@ -566,16 +571,27 @@ def _tier_results(user: Optional[dict]) -> tuple[list[dict], list[dict]]:
     """
     Return (visible_results, locked_results).
 
-    Pro  → (full list, [])
-    Free → (top 5, remaining rows as blurred placeholders)
+    Pro/Analyst (incl. an active no-card trial) → (full list, [])
+    Free → (top 25, remaining rows as blurred placeholders)
     """
     results = _state["results"]
-    if user and user.get("tier") == "pro":
+    if user and effective_tier(user) in ("analyst", "pro"):
         return results, []
 
     if not results:
         return [], []
     return results[:FREE_TIER_LIMIT], results[FREE_TIER_LIMIT:]
+
+
+def _csv_results(user: Optional[dict]) -> list[dict]:
+    """
+    CSV export stays a Pro-only perk -- Analyst's board access doesn't
+    extend to it, so this deliberately doesn't reuse _tier_results.
+    """
+    results = _state["results"]
+    if user and effective_tier(user) == "pro":
+        return results
+    return results[:FREE_TIER_LIMIT]
 
 
 # ---------------------------------------------------------------------------
@@ -681,7 +697,7 @@ def _render_table_rows(results: list[dict], locked: list[dict] | None = None) ->
             be = r["breakeven_cycles"]
             be_str = f"{be:.1f}" if be is not None else "∞"
             rows.append(
-                f'<tr class="data-row locked-row" onclick="document.location=\'/billing/checkout\'">'
+                f'<tr class="data-row locked-row" onclick="document.location=\'/billing/checkout?tier=analyst\'">'
                 f'<td style="padding:.7rem .5rem .7rem .75rem"><span style="color:var(--mist)">☆</span></td>'
                 f'<td><span class="sym-name locked-blur">{r["symbol"]}</span></td>'
                 f'<td><span class="exch-badge exch-{r["exchange"]} locked-blur">{exch}</span></td>'
@@ -695,8 +711,8 @@ def _render_table_rows(results: list[dict], locked: list[dict] | None = None) ->
             )
         rows.append(
             f'<tr><td colspan="8" style="padding:.75rem 1rem 1.25rem;text-align:center">'
-            f'<a href="/billing/checkout" class="pro-unlock-btn">'
-            f'Unlock {len(locked)} more pairs — Upgrade to Pro</a>'
+            f'<a href="/billing/checkout?tier=analyst" class="pro-unlock-btn">'
+            f'Unlock {len(locked)} more pairs — from £8/mo</a>'
             f'</td></tr>'
         )
 
@@ -794,6 +810,8 @@ def dashboard(request: Request):
         "dashboard.html",
         {
             "user": user,
+            "tier": effective_tier(user),
+            "trial_days_left": trial_days_left(user),
             "locked_count": len(locked),
             "exchanges": exchanges,
             "position_sizes": sizing.POSITION_SIZES,
@@ -806,6 +824,23 @@ def dashboard(request: Request):
 # ---------------------------------------------------------------------------
 # Auth routes — magic link flow
 # ---------------------------------------------------------------------------
+
+# Only these route prefixes are honoured for post-login redirect -- an
+# unrestricted `next` would be an open redirect via the magic-link email.
+_SAFE_NEXT_PREFIXES = ("/app", "/billing/checkout", "/trial/start")
+
+
+def _safe_next(path: str) -> str:
+    if (
+        path
+        and path.startswith("/")
+        and not path.startswith("//")
+        and "://" not in path
+        and path.split("?")[0] in _SAFE_NEXT_PREFIXES
+    ):
+        return path
+    return "/app"
+
 
 _AUTH_PAGE = """<!DOCTYPE html>
 <html lang="en">
@@ -835,6 +870,7 @@ _AUTH_PAGE = """<!DOCTYPE html>
   {error}
   <form method="post" action="/auth/request">
     <input type="email" name="email" placeholder="you@example.com" required autofocus>
+    <input type="hidden" name="next" value="{next}">
     <button type="submit">Send sign-in link</button>
   </form>
   <a href="/" class="back">← Back to home</a>
@@ -844,17 +880,18 @@ _AUTH_PAGE = """<!DOCTYPE html>
 
 
 @app.get("/auth/request", response_class=HTMLResponse)
-def auth_request_page(request: Request, error: str = ""):
+def auth_request_page(request: Request, error: str = "", next: str = "/app"):
     if _current_user(request):
-        return RedirectResponse("/app", status_code=302)
-    err_html = f'<p class="err">{error}</p>' if error else ""
-    return _AUTH_PAGE.format(error=err_html)
+        return RedirectResponse(_safe_next(next), status_code=302)
+    err_html = f'<p class="err">{html.escape(error)}</p>' if error else ""
+    return _AUTH_PAGE.format(error=err_html, next=html.escape(_safe_next(next)))
 
 
 @app.post("/auth/request", response_class=HTMLResponse)
 async def auth_request_submit(request: Request):
     form = await request.form()
     email = str(form.get("email", "")).strip().lower()
+    next_path = _safe_next(str(form.get("next", "/app")))
     if not email:
         return RedirectResponse("/auth/request", status_code=302)
 
@@ -864,14 +901,15 @@ async def auth_request_submit(request: Request):
     resend_key = os.getenv("RESEND_API_KEY", "")
     if resend_key:
         try:
-            send_magic_link(email, token)
+            send_magic_link(email, token, next_path=next_path)
         except Exception as e:
             log.error("Failed to send magic link to %s: %s", email, e)
             # Don't leak whether send failed — show same page
     else:
         # Dev mode: log the link so you can click it without Resend configured
         base = os.getenv("BASE_URL", "http://localhost:8000")
-        log.warning("DEV — magic link for %s: %s/auth/verify?token=%s", email, base, token)
+        log.warning("DEV — magic link for %s: %s/auth/verify?token=%s&next=%s",
+                    email, base, token, quote(next_path, safe=""))
 
     return f"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"><title>Check your email — FundScan</title>
@@ -888,8 +926,8 @@ p{{color:#A7B2C4;margin:.75rem 0;font-size:.95rem}}a{{color:#C9A551;text-decorat
 
 
 @app.get("/auth/verify")
-def auth_verify(request: Request, token: str = ""):
-    """Consume magic link token, set session cookie, redirect to /app."""
+def auth_verify(request: Request, token: str = "", next: str = "/app"):
+    """Consume magic link token, set session cookie, redirect to `next` (default /app)."""
     if not token:
         return RedirectResponse("/auth/request?error=Missing+token", status_code=302)
 
@@ -901,7 +939,7 @@ def auth_verify(request: Request, token: str = ""):
 
     user = get_or_create_user(email)
     cookie = make_session_cookie(user["id"])
-    resp = RedirectResponse("/app", status_code=302)
+    resp = RedirectResponse(_safe_next(next), status_code=302)
     resp.set_cookie(
         SESSION_COOKIE,
         cookie,
@@ -925,15 +963,18 @@ def auth_logout():
 # ---------------------------------------------------------------------------
 
 @app.get("/billing/checkout")
-def billing_checkout(request: Request):
-    """Serve our custom embedded checkout page."""
+def billing_checkout(request: Request, tier: str = "pro"):
+    """Serve our custom embedded checkout page for the given tier (pro/analyst)."""
+    if tier not in ("pro", "analyst"):
+        tier = "pro"
     user = _current_user(request)
     if not user:
-        return RedirectResponse("/auth/request?next=/billing/checkout", status_code=302)
-    if user.get("tier") == "pro":
+        next_path = quote(f"/billing/checkout?tier={tier}", safe="")
+        return RedirectResponse(f"/auth/request?next={next_path}", status_code=302)
+    if user.get("tier") == "pro" or user.get("tier") == tier:
         return RedirectResponse("/account", status_code=302)
     pk = os.getenv("STRIPE_PUBLISHABLE_KEY", "")
-    return templates.TemplateResponse(request, "checkout.html", {"publishable_key": pk})
+    return templates.TemplateResponse(request, "checkout.html", {"publishable_key": pk, "tier": tier})
 
 
 @app.post("/api/billing/create-session")
@@ -942,30 +983,57 @@ async def billing_create_session(request: Request):
     user = _current_user(request)
     if not user:
         raise HTTPException(401, "Login required")
-    if user.get("tier") == "pro":
-        raise HTTPException(400, "Already Pro")
+
+    body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
+    tier = body.get("tier", "pro")
+    if tier not in ("pro", "analyst"):
+        tier = "pro"
+    if user.get("tier") == "pro" or user.get("tier") == tier:
+        raise HTTPException(400, f"Already {tier}")
 
     stripe_key = os.getenv("STRIPE_SECRET_KEY", "")
-    price_id = os.getenv("STRIPE_PRICE_ID", "")
+    price_id = os.getenv("STRIPE_ANALYST_PRICE_ID" if tier == "analyst" else "STRIPE_PRICE_ID", "")
     if not stripe_key or not price_id:
         raise HTTPException(500, "Stripe not configured")
 
     try:
         from .billing import create_embedded_session
-        client_secret = create_embedded_session(user["email"])
+        client_secret = create_embedded_session(user["email"], tier=tier)
         return {"clientSecret": client_secret}
     except Exception as e:
         log.error("Stripe create-session failed for %s:\n%s", user["email"], traceback.format_exc())
         raise HTTPException(500, "Could not load checkout. Please try again or email hello@fundscan.uk.")
 
 
+@app.get("/trial/start")
+def trial_start(request: Request):
+    """
+    Start a one-time, no-card, 7-day trial granting full-list access
+    (Analyst-level). Idempotent-safe: a second click after a trial has
+    already been started or used is a no-op redirect, not an error.
+    """
+    user = _current_user(request)
+    if not user:
+        return RedirectResponse("/auth/request?next=/trial/start", status_code=302)
+    start_trial(user["email"])
+    return RedirectResponse("/app?trial=1", status_code=302)
+
+
 @app.get("/billing/return")
-def billing_return(request: Request, session_id: str = ""):
+def billing_return(request: Request, session_id: str = "", tier: str = "pro"):
     """Post-payment landing page after Stripe embedded checkout completes."""
+    if tier not in ("analyst", "pro"):
+        tier = "pro"
     user = _current_user(request)
     name = user["email"].split("@")[0] if user else "there"
+    plan_name = "Analyst" if tier == "analyst" else "Pro"
+    welcome_copy = (
+        "You're all set, {name}. Your account has been upgraded — the complete live list, all venues, is now unlocked."
+        if tier == "analyst" else
+        "You're all set, {name}. Your account has been upgraded — all pairs, live alerts, and CSV export are now unlocked."
+    ).format(name=name)
     return HTMLResponse(f"""<!DOCTYPE html>
-<html lang="en"><head><meta charset="utf-8"><title>Welcome to Pro — FundScan</title>
+<html lang="en"><head><meta charset="utf-8"><title>Welcome to {plan_name} — FundScan</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,600&family=Instrument+Sans:wght@400;500&display=swap" rel="stylesheet">
 <style>
@@ -993,8 +1061,8 @@ p{{color:var(--soft);font-size:15px;line-height:1.7;margin-bottom:2rem}}
   <div class="check">
     <svg width="28" height="28" viewBox="0 0 28 28" fill="none"><path d="M6 14l5.5 5.5L22 9" stroke="#3FBE8E" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
   </div>
-  <h1>Welcome to <span>Pro</span></h1>
-  <p>You're all set, {name}. Your account has been upgraded — all pairs, live alerts, and CSV export are now unlocked.</p>
+  <h1>Welcome to <span>{plan_name}</span></h1>
+  <p>{welcome_copy}</p>
   <a href="/app" class="btn">Go to dashboard →</a>
 </div>
 <script>
@@ -1006,7 +1074,7 @@ p{{color:var(--soft);font-size:15px;line-height:1.7;margin-bottom:2rem}}
       const r = await fetch('/api/me');
       if (r.ok) {{
         const d = await r.json();
-        if (d.tier === 'pro') clearInterval(check);
+        if (d.tier === '{tier}') clearInterval(check);
       }}
     }} catch{{}}
   }}, 2500);
@@ -1055,24 +1123,50 @@ def account(request: Request):
     if not user:
         return RedirectResponse("/auth/request", status_code=302)
 
-    tier = user["tier"]
+    billing_tier = user["tier"]
+    trial_active = effective_tier(user) == "analyst" and billing_tier == "free"
+    days_left = trial_days_left(user) if trial_active else None
     base_url = os.getenv("BASE_URL", "http://localhost:8000")
-    if tier == "pro":
-        plan_html = '<span style="color:#22c55e;font-weight:600">Pro</span>'
+
+    def _manage_url() -> str:
         stripe_key = os.getenv("STRIPE_SECRET_KEY", "")
-        if stripe_key:
-            try:
-                from .billing import portal_url
-                manage_url = portal_url(user["email"], return_url=f"{base_url}/account")
-            except Exception as e:
-                log.warning("Stripe portal session failed for %s: %s", user["email"], e)
-                manage_url = "/account"
-        else:
-            manage_url = "/account"
-        action_html = f'<a href="{manage_url}" style="color:#C9A551">Manage subscription →</a>'
+        if not stripe_key:
+            return "/account"
+        try:
+            from .billing import portal_url
+            return portal_url(user["email"], return_url=f"{base_url}/account")
+        except Exception as e:
+            log.warning("Stripe portal session failed for %s: %s", user["email"], e)
+            return "/account"
+
+    if billing_tier == "pro":
+        plan_html = '<span style="color:#22c55e;font-weight:600">Pro</span>'
+        action_html = f'<a href="{_manage_url()}" style="color:#C9A551">Manage subscription →</a>'
+    elif billing_tier == "analyst":
+        plan_html = '<span style="color:#C9A551;font-weight:600">Analyst</span>'
+        action_html = (
+            f'<a href="{_manage_url()}" style="color:#67748A">Manage subscription</a> · '
+            '<a href="/billing/checkout?tier=pro" style="color:#C9A551;font-weight:600">Upgrade to Pro — £20/month →</a>'
+        )
+    elif trial_active:
+        plural = "s" if days_left != 1 else ""
+        plan_html = (
+            '<span style="color:#C9A551;font-weight:600">Analyst trial</span> '
+            f'<span style="color:#67748A;font-size:.85rem">({days_left} day{plural} left)</span>'
+        )
+        action_html = '<a href="/billing/checkout?tier=analyst" style="color:#C9A551;font-weight:600">Keep full access — subscribe to Analyst →</a>'
     else:
         plan_html = "Free"
-        action_html = '<a href="/billing/checkout" style="color:#C9A551;font-weight:600">Upgrade to Pro — £20/month →</a>'
+        trial_cta = (
+            "" if user.get("trial_expires_at") else
+            '<a href="/trial/start" style="color:#67748A;font-size:.85rem;display:block;margin-top:.4rem">'
+            "Or start a free 7-day trial — no card required</a>"
+        )
+        action_html = (
+            '<a href="/billing/checkout?tier=analyst" style="color:#C9A551;font-weight:600">Upgrade to Analyst — £8/month →</a>'
+            '<a href="/billing/checkout?tier=pro" style="color:#67748A;font-size:.85rem;display:block;margin-top:.4rem">Or go straight to Pro — £20/month →</a>'
+            f'{trial_cta}'
+        )
 
     # Telegram section
     from .db import get_conn as _get_conn
@@ -1143,7 +1237,7 @@ a.signout:hover{{color:#EEF1F6}}
 <h1>Account</h1>
 <div class="row"><span class="label">Email</span><span>{user["email"]}</span></div>
 <div class="row"><span class="label">Plan</span><span>{plan_html}</span></div>
-<div class="row" style="border:none;padding-top:1.25rem">{action_html}</div>
+<div class="row" style="border:none;padding-top:1.25rem;display:block">{action_html}</div>
 {tg_html}
 {wl_html}
 <div class="links">

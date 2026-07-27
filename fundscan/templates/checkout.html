@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Upgrade to Pro — FundScan</title>
+<title>Upgrade — FundScan</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,500;0,8..60,600;1,8..60,400&family=Instrument+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -137,6 +137,18 @@ nav{position:fixed;top:0;left:0;right:0;z-index:50;display:flex;align-items:cent
 
   <!-- Left: plan summary -->
   <div class="plan-panel">
+    {% if tier == "analyst" %}
+    <div class="plan-label">Upgrade</div>
+    <h1 class="plan-title">FundScan <span>Analyst</span></h1>
+    <div class="plan-price"><sup>£</sup>8<sub> / month</sub></div>
+    <p class="plan-desc">Cancel any time. No lock-in.</p>
+
+    <ul class="features">
+      <li><span><strong>All pairs, all exchanges</strong> — every funding rate opportunity ranked by net yield</span></li>
+      <li><span><strong>Live data, zero delay</strong> — no throttling, no free-tier holdback</span></li>
+      <li><span><strong>Fee-adjusted yields</strong> — every number shown net of 4-leg execution cost</span></li>
+    </ul>
+    {% else %}
     <div class="plan-label">Upgrade</div>
     <h1 class="plan-title">FundScan <span>Pro</span></h1>
     <div class="plan-price"><sup>£</sup>20<sub> / month</sub></div>
@@ -149,6 +161,7 @@ nav{position:fixed;top:0;left:0;right:0;z-index:50;display:flex;align-items:cent
       <li><span><strong>Live data, zero delay</strong> — no throttling, no free-tier holdback</span></li>
       <li><span><strong>Fee-adjusted yields</strong> — every number shown net of 4-leg execution cost</span></li>
     </ul>
+    {% endif %}
 
     <div class="trust">
       <div class="trust-item">
@@ -186,7 +199,11 @@ nav{position:fixed;top:0;left:0;right:0;z-index:50;display:flex;align-items:cent
 
   let clientSecret;
   try {
-    const res = await fetch('/api/billing/create-session', { method: 'POST' });
+    const res = await fetch('/api/billing/create-session', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tier: '{{ tier }}' }),
+    });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.detail || `HTTP ${res.status}`);

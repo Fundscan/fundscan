@@ -228,13 +228,15 @@ tr.chart-row td{padding:.5rem 1rem 1.25rem;background:rgba(15,27,48,.4);border-b
     <span class="live-badge" id="status-bar"
           hx-get="/htmx/status" hx-trigger="every 30s" hx-swap="outerHTML">LIVE</span>
     {% if user %}
-    <span class="user-pill"><b>{{ user.email }}</b> · {{ user.tier }}</span>
-    <a href="/export/rates.csv" class="nav-link">↓ CSV</a>
+    <span class="user-pill"><b>{{ user.email }}</b> · {{ tier }}{% if trial_days_left %} (trial, {{ trial_days_left }}d left){% endif %}</span>
+    {% if tier == 'pro' %}<a href="/export/rates.csv" class="nav-link">↓ CSV</a>{% endif %}
     <a href="/account" class="nav-link">account</a>
     <a href="/auth/logout" class="nav-link">sign out</a>
     {% endif %}
-    {% if user and user.tier == 'free' %}
-    <a href="/billing/checkout" class="btn-upgrade">Upgrade — £20/mo</a>
+    {% if user and tier == 'free' %}
+    <a href="/billing/checkout?tier=analyst" class="btn-upgrade">Upgrade — £8/mo</a>
+    {% elif user and tier == 'analyst' %}
+    <a href="/billing/checkout?tier=pro" class="btn-upgrade">Upgrade to Pro — £20/mo</a>
     {% endif %}
   </div>
 </nav>
@@ -247,9 +249,14 @@ tr.chart-row td{padding:.5rem 1rem 1.25rem;background:rgba(15,27,48,.4);border-b
   </div>
 </div>
 
-{% if user and user.tier == 'free' %}
+{% if user and tier == 'free' %}
 <div class="tier-banner">
-  <p><b>Free tier</b> — top 25 pairs · <b>{{ locked_count }}</b> more pair{{ 's' if locked_count != 1 else '' }} visible on Pro</p>
+  <p><b>Free tier</b> — top 25 pairs · <b>{{ locked_count }}</b> more pair{{ 's' if locked_count != 1 else '' }} visible on Analyst/Pro
+    {% if not user.trial_expires_at %} · <a href="/trial/start" style="color:var(--gold)">start a free 7-day trial, no card</a>{% endif %}</p>
+</div>
+{% elif user and trial_days_left %}
+<div class="tier-banner">
+  <p><b>Analyst trial</b> — full list unlocked · <b>{{ trial_days_left }}</b> day{{ 's' if trial_days_left != 1 else '' }} left · <a href="/billing/checkout?tier=analyst" style="color:var(--gold)">keep it — subscribe</a></p>
 </div>
 {% endif %}
 
@@ -432,7 +439,7 @@ async function toggleWatchlist(btn) {
 
 // ── Row expand ───────────────────────────────────────────────────────────────
 async function toggleChart(row) {
-  if (row.classList.contains('locked-row')) { window.location='/billing/checkout'; return; }
+  if (row.classList.contains('locked-row')) { window.location='/billing/checkout?tier=analyst'; return; }
   const {symbol, exchange} = row.dataset;
   const chartRowId = `chart-${symbol}-${exchange}`;
   const chartRow = document.getElementById(chartRowId);
