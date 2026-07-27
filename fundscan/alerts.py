@@ -19,11 +19,12 @@ import logging
 import os
 import secrets
 from datetime import datetime, timedelta, timezone
+from typing import Optional
 
 import httpx
 
 from .db import get_conn
-from .auth import send_email
+from .auth import get_or_create_user, send_email
 
 log = logging.getLogger(__name__)
 
@@ -70,6 +71,51 @@ def link_telegram(code: str, chat_id: str) -> bool:
             (chat_id, row["id"]),
         )
     return True
+
+
+# ---------------------------------------------------------------------------
+# Low-friction quick signup (email + threshold, no magic-link click required)
+# ---------------------------------------------------------------------------
+
+def create_quick_alert(email: str, min_net_apy: float, symbol: Optional[str] = None) -> None:
+    """
+    "Notify me when a pair crosses X% net APY" -- captures a lead without
+    the full magic-link signup flow. Silently creates the account (same
+    get_or_create_user() the magic-link flow uses) and an email-only alert
+    config (telegram_chat_id left NULL), so the existing
+    check_and_send_alerts() cron delivers it with no separate code path.
+    They can log in later via the normal magic link to manage or add
+    Telegram if they want it.
+
+    Re-submitting the same (email, symbol) updates the threshold on the
+    existing row rather than creating a duplicate -- alert_configs has no
+    unique constraint, and a duplicate row would mean a duplicate alert
+    each time check_and_send_alerts() runs.
+    """
+    user = get_or_create_user(email)
+    with get_conn() as conn:
+        existing = conn.execute(
+            """
+            SELECT id FROM alert_configs
+            WHERE user_id = ?
+              AND (symbol IS ? OR symbol = ?)
+              AND telegram_chat_id IS NULL
+            """,
+            (user["id"], symbol, symbol),
+        ).fetchone()
+        if existing:
+            conn.execute(
+                "UPDATE alert_configs SET min_net_apy = ? WHERE id = ?",
+                (min_net_apy, existing["id"]),
+            )
+        else:
+            conn.execute(
+                """
+                INSERT INTO alert_configs (user_id, symbol, min_net_apy, telegram_chat_id)
+                VALUES (?, ?, ?, NULL)
+                """,
+                (user["id"], symbol, min_net_apy),
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -123,14 +169,21 @@ def _get_connected_users() -> list:
 
 
 def _get_all_users_with_alerts() -> list:
-    """All users who have an alert config (Telegram OR email-only via min_net_apy row)."""
+    """
+    All users who have an alert config (Telegram OR email-only via
+    min_net_apy row). `telegram_chat_id NOT LIKE 'PENDING:%'` alone excludes
+    email-only rows too -- SQL's three-valued logic makes
+    `NULL NOT LIKE 'x'` evaluate to NULL (excluded from WHERE), not TRUE --
+    so NULL is matched explicitly here as well.
+    """
     with get_conn() as conn:
         return conn.execute(
             """
             SELECT ac.*, u.tier, u.email
             FROM alert_configs ac
             JOIN users u ON u.id = ac.user_id
-            WHERE ac.telegram_chat_id NOT LIKE 'PENDING:%'
+            WHERE ac.telegram_chat_id IS NULL
+               OR ac.telegram_chat_id NOT LIKE 'PENDING:%'
             """
         ).fetchall()
 

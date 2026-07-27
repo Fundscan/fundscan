@@ -26,11 +26,12 @@ from . import sizing
 from . import pairing
 from . import signals
 from .backtest import realized_accuracy
+from .content import CHANGELOG, GUIDES, find_guide
 from .db import init_db, insert_snapshots, query_delayed, query_history, query_latest, query_sparklines, get_watchlist, toggle_watchlist, get_conn
 from .scanner import scan
 from .alerts import (check_and_send_alerts, check_anomalies, send_daily_digest,
                      check_multi_exchange, check_watchlist_drops,
-                     generate_connect_code, link_telegram)
+                     generate_connect_code, link_telegram, create_quick_alert)
 from .onboarding import run_onboarding, run_weekly_report
 from .maintenance import run_db_backup, run_db_prune, run_seo_check
 from .competitor import run_competitor_monitor, run_reddit_scout
@@ -174,11 +175,41 @@ def public_rates(request: Request):
     )
 
 
+@app.get("/changelog", response_class=HTMLResponse)
+def changelog(request: Request):
+    """Public changelog — dated, real entries (including corrections to our own numbers)."""
+    return templates.TemplateResponse(
+        request, "changelog.html", {"entries": CHANGELOG, "site_url": SITE_URL}
+    )
+
+
+@app.get("/guides", response_class=HTMLResponse)
+def guides_index(request: Request):
+    """Public guides index — methodology content for SEO + top-of-funnel."""
+    return templates.TemplateResponse(
+        request, "guides_index.html", {"guides": GUIDES, "site_url": SITE_URL}
+    )
+
+
+@app.get("/guides/{slug}", response_class=HTMLResponse)
+def guide_detail(request: Request, slug: str):
+    guide = find_guide(slug)
+    if not guide:
+        raise HTTPException(404, f"Guide '{slug}' not found")
+    return templates.TemplateResponse(
+        request, "guide_detail.html", {"guide": guide, "site_url": SITE_URL}
+    )
+
+
 @app.get("/sitemap.xml")
 def sitemap():
     urls = [
         (f"{SITE_URL}/", "daily", "1.0"),
         (f"{SITE_URL}/rates", "hourly", "0.9"),
+        (f"{SITE_URL}/guides", "weekly", "0.6"),
+        (f"{SITE_URL}/changelog", "weekly", "0.4"),
+    ] + [
+        (f"{SITE_URL}/guides/{g['slug']}", "monthly", "0.5") for g in GUIDES
     ]
     body = (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
@@ -199,6 +230,8 @@ def robots_txt():
         "User-agent: *\n"
         "Allow: /\n"
         "Allow: /rates\n"
+        "Allow: /guides\n"
+        "Allow: /changelog\n"
         "Disallow: /app\n"
         "Disallow: /account\n"
         "Disallow: /admin\n"
@@ -401,6 +434,30 @@ async def watchlist_toggle(request: Request):
         raise HTTPException(400, "symbol and exchange required")
     added = toggle_watchlist(user["id"], symbol, exchange)
     return {"symbol": symbol, "exchange": exchange, "watchlisted": added}
+
+
+@app.post("/alerts/quick-signup")
+async def alerts_quick_signup(request: Request):
+    """
+    Low-friction lead capture: "notify me when a pair crosses X% net APY."
+    No login, no magic-link click required -- just an email and a
+    threshold. Body: {email, min_net_apy_pct, symbol (optional)}.
+    """
+    body = await request.json()
+    email = str(body.get("email", "")).strip().lower()
+    symbol = str(body.get("symbol") or "").strip().upper() or None
+    try:
+        min_net_apy_pct = float(body.get("min_net_apy_pct"))
+    except (TypeError, ValueError):
+        raise HTTPException(400, "min_net_apy_pct must be a number")
+
+    if not email or "@" not in email:
+        raise HTTPException(400, "A valid email is required")
+    if not (0 < min_net_apy_pct < 10000):
+        raise HTTPException(400, "min_net_apy_pct out of range")
+
+    create_quick_alert(email, min_net_apy_pct / 100, symbol)
+    return {"ok": True, "email": email, "min_net_apy_pct": min_net_apy_pct, "symbol": symbol}
 
 
 # ---------------------------------------------------------------------------

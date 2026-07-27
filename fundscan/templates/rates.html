@@ -91,6 +91,16 @@ tbody td{padding:.75rem 1rem;font-size:14px}
   background:linear-gradient(160deg,rgba(201,165,81,.07),transparent);text-align:center}
 .cta-band h2{font-family:var(--serif);font-size:24px;font-weight:600;margin-bottom:10px}
 .cta-band p{color:var(--soft);margin-bottom:22px}
+.quick-alert-form{display:flex;align-items:center;justify-content:center;gap:10px;flex-wrap:wrap;margin:0 auto}
+.quick-alert-form input{font-family:var(--sans);font-size:14px;padding:10px 14px;border-radius:4px;
+  background:var(--navy);border:1px solid var(--hairline-2);color:var(--ivory);outline:none}
+.quick-alert-form input:focus{border-color:rgba(201,165,81,.5)}
+.quick-alert-form input[type="email"]{width:220px}
+.quick-alert-form input[type="number"]{width:80px}
+.quick-alert-when,.quick-alert-pct{font-family:var(--mono);font-size:12.5px;color:var(--mist)}
+.quick-alert-msg{font-family:var(--mono);font-size:13px;margin-top:14px;min-height:1.2em}
+.quick-alert-msg.ok{color:var(--green)}
+.quick-alert-msg.err{color:var(--red)}
 
 footer{border-top:1px solid var(--hairline);padding:32px;color:var(--mist);font-size:12.5px;line-height:1.75;max-width:1080px;margin:0 auto}
 footer a{color:var(--gold);text-decoration:none}
@@ -206,8 +216,16 @@ footer a{color:var(--gold);text-decoration:none}
 
   <div class="cta-band">
     <h2>Get notified when a pair crosses your threshold.</h2>
-    <p>Free tier, no API keys, no card required. Define a net-yield threshold and get a Telegram alert the moment it's crossed.</p>
-    <a href="/auth/request" class="btn">Start free →</a>
+    <p>No account, no API keys, no card. Just an email and a net-APY threshold.</p>
+    <form class="quick-alert-form" onsubmit="return submitQuickAlert(event, this)">
+      <input type="email" name="email" placeholder="you@example.com" required>
+      <span class="quick-alert-when">when net APY crosses</span>
+      <input type="number" name="threshold" placeholder="20" min="1" max="9999" step="1" required>
+      <span class="quick-alert-pct">%</span>
+      <button type="submit" class="btn">Notify me</button>
+    </form>
+    <p class="quick-alert-msg" aria-live="polite"></p>
+    <p style="margin-top:14px;font-size:13px"><a href="/auth/request">Or create a full account for Telegram alerts + live coverage →</a></p>
   </div>
 </main>
 
@@ -219,5 +237,32 @@ footer a{color:var(--gold);text-decoration:none}
   assured. Cryptoasset trading involves substantial risk. ·
   <a href="/">Home</a> · <a href="/auth/request">Sign up</a>
 </footer>
+
+<script>
+async function submitQuickAlert(evt, form) {
+  evt.preventDefault();
+  const msg = form.parentElement.querySelector('.quick-alert-msg');
+  const email = form.email.value.trim();
+  const threshold = parseFloat(form.threshold.value);
+  msg.textContent = '';
+  msg.className = 'quick-alert-msg';
+  try {
+    const res = await fetch('/alerts/quick-signup', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({email, min_net_apy_pct: threshold}),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Something went wrong');
+    msg.textContent = `Done — we'll email ${email} when a pair crosses ${threshold}% net APY.`;
+    msg.classList.add('ok');
+    form.reset();
+  } catch (e) {
+    msg.textContent = e.message || 'Something went wrong — please try again.';
+    msg.classList.add('err');
+  }
+  return false;
+}
+</script>
 </body>
 </html>
