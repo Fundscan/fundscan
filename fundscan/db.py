@@ -181,6 +181,24 @@ def query_delayed(delay_minutes: int = 10) -> list[sqlite3.Row]:
         ).fetchall()
 
 
+def query_all_recent(days: int = 30) -> list[sqlite3.Row]:
+    """
+    All funding_snapshots within the last `days`, across every (exchange,
+    symbol) pair -- one query instead of one-per-symbol, grouped client-side
+    by the caller. Used for the public accuracy track record page.
+    """
+    with get_conn() as conn:
+        return conn.execute(
+            """
+            SELECT exchange, symbol, ts, net_apy
+            FROM funding_snapshots
+            WHERE ts >= datetime('now', ?)
+            ORDER BY exchange, symbol, ts ASC
+            """,
+            (f"-{days} days",),
+        ).fetchall()
+
+
 def query_history(symbol: str, days: int = 7) -> list[sqlite3.Row]:
     with get_conn() as conn:
         return conn.execute(

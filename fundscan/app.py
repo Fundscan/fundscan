@@ -27,9 +27,9 @@ from . import math as fm
 from . import sizing
 from . import pairing
 from . import signals
-from .backtest import realized_accuracy
+from .backtest import aggregate_accuracy, realized_accuracy
 from .content import CHANGELOG, GUIDES, find_guide
-from .db import init_db, insert_snapshots, query_delayed, query_history, query_latest, query_sparklines, get_watchlist, toggle_watchlist, get_conn
+from .db import init_db, insert_snapshots, query_all_recent, query_delayed, query_history, query_latest, query_sparklines, get_watchlist, toggle_watchlist, get_conn
 from .scanner import scan
 from .alerts import (check_and_send_alerts, check_anomalies, send_daily_digest,
                      check_multi_exchange, check_watchlist_drops,
@@ -206,11 +206,41 @@ def guide_detail(request: Request, slug: str):
     )
 
 
+ACCURACY_WINDOW_DAYS = 30
+
+
+@app.get("/accuracy", response_class=HTMLResponse)
+def accuracy_page(request: Request):
+    """
+    Public accuracy track record: how the headline net APY figure has
+    compared to what was actually realized over the trailing window,
+    rolled up across every pair with enough history to measure. See
+    backtest.py for the honesty caveats (simple average, not time-weighted;
+    a pair needs MIN_SAMPLES_FOR_AGGREGATE snapshots before it counts).
+    """
+    rows = query_all_recent(ACCURACY_WINDOW_DAYS)
+    grouped: dict[tuple, list] = {}
+    for r in rows:
+        grouped.setdefault((r["exchange"], r["symbol"]), []).append(r)
+    per_pair = [realized_accuracy(v) for v in grouped.values()]
+    summary = aggregate_accuracy(per_pair)
+    return templates.TemplateResponse(
+        request,
+        "accuracy.html",
+        {
+            "summary": summary,
+            "window_days": ACCURACY_WINDOW_DAYS,
+            "site_url": SITE_URL,
+        },
+    )
+
+
 @app.get("/sitemap.xml")
 def sitemap():
     urls = [
         (f"{SITE_URL}/", "daily", "1.0"),
         (f"{SITE_URL}/rates", "hourly", "0.9"),
+        (f"{SITE_URL}/accuracy", "daily", "0.7"),
         (f"{SITE_URL}/guides", "weekly", "0.6"),
         (f"{SITE_URL}/changelog", "weekly", "0.4"),
     ] + [
@@ -235,6 +265,7 @@ def robots_txt():
         "User-agent: *\n"
         "Allow: /\n"
         "Allow: /rates\n"
+        "Allow: /accuracy\n"
         "Allow: /guides\n"
         "Allow: /changelog\n"
         "Disallow: /app\n"

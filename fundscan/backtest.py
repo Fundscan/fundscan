@@ -43,3 +43,43 @@ def realized_accuracy(history_rows: list) -> Optional[dict]:
         "realized_avg_net_apy": realized_avg_net_apy,
         "gap": current_net_apy - realized_avg_net_apy,
     }
+
+
+# Below this many snapshots, a pair hasn't been tracked long enough for its
+# realized average to mean anything -- excluded from the public aggregate
+# rather than let a freshly-added pair's noise dilute the headline figure.
+MIN_SAMPLES_FOR_AGGREGATE = 20
+
+
+def aggregate_accuracy(accuracy_results: list) -> Optional[dict]:
+    """
+    Roll up individual realized_accuracy() results (one per exchange/symbol)
+    into a single public trust signal: how far the headline net APY has
+    typically been from what was actually realized, and how often the
+    profitable/not-profitable call itself would have flipped.
+
+    Each element of `accuracy_results` is a realized_accuracy() return value
+    (or None, which is skipped). Returns None if no pair has enough history
+    yet to clear MIN_SAMPLES_FOR_AGGREGATE.
+    """
+    eligible = [a for a in accuracy_results if a and a["samples"] >= MIN_SAMPLES_FOR_AGGREGATE]
+    if not eligible:
+        return None
+
+    abs_gaps_pct = sorted(abs(a["gap"]) * 100 for a in eligible)
+    mid = len(abs_gaps_pct) // 2
+    median_gap_pct = (
+        abs_gaps_pct[mid] if len(abs_gaps_pct) % 2 == 1
+        else (abs_gaps_pct[mid - 1] + abs_gaps_pct[mid]) / 2
+    )
+    sign_agreements = sum(
+        1 for a in eligible
+        if (a["current_net_apy"] > 0) == (a["realized_avg_net_apy"] > 0)
+    )
+
+    return {
+        "pairs_measured": len(eligible),
+        "mean_abs_gap_pct": mean(abs_gaps_pct),
+        "median_abs_gap_pct": median_gap_pct,
+        "profitability_sign_agreement_pct": (sign_agreements / len(eligible)) * 100,
+    }
