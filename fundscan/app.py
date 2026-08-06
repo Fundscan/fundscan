@@ -18,7 +18,7 @@ import io
 import traceback
 
 from fastapi import FastAPI, Header, HTTPException, Request
-from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse, StreamingResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, RedirectResponse, StreamingResponse, Response
 from fastapi.templating import Jinja2Templates
 
 from . import math as fm
@@ -323,6 +323,15 @@ def robots_txt():
         f"Sitemap: {SITE_URL}/sitemap.xml\n"
     )
     return PlainTextResponse(content=body)
+
+
+OG_IMAGE_PATH = Path(__file__).parent.parent / "fundscan_banner.png"
+
+
+@app.get("/og-image.png")
+def og_image():
+    """Shared social-preview image for og:image/twitter:image across public pages."""
+    return FileResponse(OG_IMAGE_PATH, media_type="image/png")
 
 
 @app.get("/rates/{symbol}")
@@ -859,6 +868,7 @@ def root(request: Request):
         request,
         "landing.html",
         {
+            "site_url": SITE_URL,
             "strip_html": _build_strip_html(results),
             "board_rows": _build_board_rows(results),
             "pairs_count": len(results),

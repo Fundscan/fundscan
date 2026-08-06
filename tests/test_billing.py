@@ -121,3 +121,70 @@ def test_unknown_event_no_crash():
     event = _make_event("some.unknown.event", {"foo": "bar"})
     with patch("fundscan.billing.log_webhook_event"):
         handle_webhook(event)  # should not raise
+
+
+# ---------------------------------------------------------------------------
+# Free trial (TRIAL_PERIOD_DAYS) -- checkout session creation + status lookup
+# ---------------------------------------------------------------------------
+
+def test_create_embedded_session_includes_trial_period():
+    import fundscan.billing as billing
+
+    fake_session = MagicMock()
+    fake_session.client_secret = "cs_test_secret"
+
+    with patch("stripe.checkout.Session.create", return_value=fake_session) as mock_create:
+        secret = billing.create_embedded_session("subscriber@example.com")
+
+    assert secret == "cs_test_secret"
+    kwargs = mock_create.call_args.kwargs
+    assert kwargs["subscription_data"] == {"trial_period_days": billing.TRIAL_PERIOD_DAYS}
+
+
+def test_trial_info_none_when_no_stripe_customer():
+    import fundscan.billing as billing
+
+    no_customers = MagicMock()
+    no_customers.data = []
+
+    with patch("stripe.Customer.list", return_value=no_customers):
+        assert billing.trial_info("nobody@example.com") is None
+
+
+def test_trial_info_none_when_no_trialing_subscription():
+    import fundscan.billing as billing
+
+    fake_customer = MagicMock()
+    fake_customer.id = "cus_fake"
+    customers = MagicMock()
+    customers.data = [fake_customer]
+
+    no_subs = MagicMock()
+    no_subs.data = []
+
+    with patch("stripe.Customer.list", return_value=customers), \
+         patch("stripe.Subscription.list", return_value=no_subs):
+        assert billing.trial_info("subscriber@example.com") is None
+
+
+def test_trial_info_returns_trial_end_when_trialing():
+    import fundscan.billing as billing
+    from datetime import datetime, timezone
+
+    fake_customer = MagicMock()
+    fake_customer.id = "cus_fake"
+    customers = MagicMock()
+    customers.data = [fake_customer]
+
+    trial_end_ts = int(datetime(2026, 8, 13, tzinfo=timezone.utc).timestamp())
+    fake_sub = MagicMock()
+    fake_sub.trial_end = trial_end_ts
+    subs = MagicMock()
+    subs.data = [fake_sub]
+
+    with patch("stripe.Customer.list", return_value=customers), \
+         patch("stripe.Subscription.list", return_value=subs):
+        info = billing.trial_info("subscriber@example.com")
+
+    assert info is not None
+    assert info["trial_end"] == datetime(2026, 8, 13, tzinfo=timezone.utc)

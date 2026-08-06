@@ -37,23 +37,59 @@ POSTS: list[Post] = [
         published=False,
         published_at=None,
         body_html="""
-<p><em>Draft outline — replace this with the finished piece, then set
-<code>published = True</code> and <code>published_at</code> in
-fundscan/blog.py.</em></p>
+<p>Open almost any funding-rate tracker and the number it leads with is the
+gross annualised rate — the raw funding payment, extrapolated out to a year,
+with nothing subtracted. It's not a fabricated number. It's just not the one
+that matters, because nobody earns funding without also paying to hold the
+position that earns it.</p>
+
 <h2>The number every scanner leads with</h2>
-<p>[Open with a real screenshot-style example: a rate page advertising a big
-headline number. What does a trader assume that number means?]</p>
+<p>A funding-rate arbitrage position isn't a single trade — it's a pair. You
+open a spot position and an opposite perpetual position (delta-neutral, so
+price movement washes out), collect the funding payment between exchanges,
+then close both legs later. That's four separate executions: open spot, open
+perp, close spot, close perp. Each one pays a taker fee. A tracker that only
+shows the gross rate is showing you the payment and skipping the bill.</p>
+
 <h2>What a delta-neutral position actually costs to run</h2>
-<p>Four executions — open spot, open perp, close spot, close perp — each
-paying a taker fee, plus a slippage provision on the round trip. Point to
-<a href="/#truth">the fee walkthrough</a> and the real per-venue rates in
-<code>fundscan/math.py</code>.</p>
+<p>FundScan prices each of those four legs at the venue's own real published
+taker rate — not a single flat guess applied to every exchange. Bybit charges
+<b style="color:var(--ivory)">0.055%</b> per leg, Binance/OKX/Kraken
+<b style="color:var(--ivory)">0.05%</b>, Hyperliquid
+<b style="color:var(--ivory)">0.045%</b>. Four legs at Bybit's rate is
+0.22% of notional, plus a 0.05% slippage provision for the round trip —
+<b style="color:var(--ivory)">0.27% total</b>. That cost comes out of the
+gross rate before anything is called an "opportunity." See
+<a href="/#truth">the full walkthrough</a> for how it's applied line by line.</p>
+
 <h2>A worked example, start to finish</h2>
-<p>Pull one real pair from <a href="/rates">/rates</a> and walk gross → net
-line by line, the same sequence the homepage animates.</p>
+<p>Take a Bybit pair funding at 0.01% per 8-hour period — an unremarkable,
+realistic rate, not a headline-grabbing outlier:</p>
+<ul>
+  <li>Annualised out (3 funding periods a day, 1095 a year): <b style="color:var(--ivory)">10.95% gross</b>.</li>
+  <li>Round-trip cost on Bybit — four legs plus slippage: <b style="color:var(--ivory)">−0.27%</b>.</li>
+  <li>What's left: <b style="color:var(--ivory)">10.68% net</b>.</li>
+</ul>
+<p>On this pair the gap is small — that's the real-fee model doing its job,
+not overstating cost the way a flat 0.26%-per-leg assumption used to. But the
+gap isn't always small. A thinly traded pair advertising 150% gross can look
+identical to this one on a gross-only tracker, while actually costing far
+more than fees to trade — not in taker percentage, but in slippage from
+trying to fill real size against a book that can't absorb it. Fees are a
+known, fixed cost. Depth is not, and no gross number tells you which kind of
+"expensive" you're looking at.</p>
+
 <h2>What to check before opening a position</h2>
-<p>Net APY, breakeven cycles, liquidity flag — not the headline number. Close
-with a link to <a href="/accuracy">the accuracy track record</a>.</p>
+<p>In order: <b style="color:var(--ivory)">net APY</b> (what actually
+survives the four legs), <b style="color:var(--ivory)">breakeven cycles</b>
+(how many funding settlements it takes to recoup that cost — 27 in the
+example above, roughly nine days at three a day), and the
+<b style="color:var(--ivory)">liquidity flag</b> (whether the size you'd
+actually trade fits the book, or whether the headline rate is a number you
+could never realistically capture). A gross rate answers none of these. See
+<a href="/rates">the live board</a> for all three side by side, and
+<a href="/accuracy">the accuracy track record</a> for how these headline
+figures have actually tracked their own recent history.</p>
 """,
     ),
     Post(

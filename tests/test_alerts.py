@@ -130,3 +130,80 @@ def test_invalid_connect_code(tmp_db):
     alerts = _alerts()
     ok = alerts.link_telegram("000000", "1234")
     assert ok is False
+
+
+# ---------------------------------------------------------------------------
+# create_notify_signup — low-friction "notify me" email capture
+# ---------------------------------------------------------------------------
+
+def test_notify_signup_creates_email_only_config(tmp_db):
+    alerts = _alerts()
+    user = alerts.create_notify_signup("notify@example.com", 15, symbol=None)
+
+    import fundscan.db as db_mod
+    with db_mod.get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM alert_configs WHERE user_id = ? AND symbol IS NULL",
+            (user["id"],),
+        ).fetchone()
+    assert row is not None
+    assert row["telegram_chat_id"] == ""  # not NULL -- see create_notify_signup docstring
+    assert row["min_net_apy"] == pytest.approx(0.15)
+
+
+def test_notify_signup_resubmit_updates_threshold_not_duplicates(tmp_db):
+    alerts = _alerts()
+    user = alerts.create_notify_signup("resubmit@example.com", 10, symbol="ETHUSDT")
+    alerts.create_notify_signup("resubmit@example.com", 25, symbol="ETHUSDT")
+
+    import fundscan.db as db_mod
+    with db_mod.get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM alert_configs WHERE user_id = ? AND symbol = 'ETHUSDT'",
+            (user["id"],),
+        ).fetchall()
+    assert len(rows) == 1
+    assert rows[0]["min_net_apy"] == pytest.approx(0.25)
+
+
+def test_notify_signup_different_symbols_create_separate_rows(tmp_db):
+    alerts = _alerts()
+    user = alerts.create_notify_signup("multi@example.com", 10, symbol="BTCUSDT")
+    alerts.create_notify_signup("multi@example.com", 10, symbol="ETHUSDT")
+
+    import fundscan.db as db_mod
+    with db_mod.get_conn() as conn:
+        rows = conn.execute(
+            "SELECT symbol FROM alert_configs WHERE user_id = ? ORDER BY symbol",
+            (user["id"],),
+        ).fetchall()
+    assert [r["symbol"] for r in rows] == ["BTCUSDT", "ETHUSDT"]
+
+
+def test_notify_signup_fires_email_not_telegram(tmp_db):
+    """
+    The whole point of create_notify_signup is to ride the existing
+    _send_alert() -> send_email() path without a Telegram connection.
+    Exercises _send_alert directly (rather than check_and_send_alerts,
+    which would also process every other wildcard config already seeded
+    elsewhere in this module-scoped fixture) so this only asserts on the
+    behavior for this one signup's config.
+    """
+    alerts = _alerts()
+    alerts.create_notify_signup("firesemail@example.com", 10, symbol="DOGEUSDT")
+
+    import fundscan.db as db_mod
+    with db_mod.get_conn() as conn:
+        cfg = conn.execute(
+            "SELECT ac.*, u.email FROM alert_configs ac JOIN users u ON u.id = ac.user_id "
+            "WHERE ac.symbol = 'DOGEUSDT' AND u.email = 'firesemail@example.com'"
+        ).fetchone()
+    row = _make_result(symbol="DOGEUSDT", net_apy=0.20)
+
+    with patch.object(alerts, "_send_telegram") as mock_tg, \
+         patch.object(alerts, "send_email") as mock_email:
+        alerts._send_alert(cfg, row)
+
+    mock_tg.assert_not_called()
+    mock_email.assert_called_once()
+    assert mock_email.call_args[0][0] == "firesemail@example.com"
