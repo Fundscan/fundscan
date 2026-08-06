@@ -5,6 +5,19 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>FundScan — Funding rate intelligence, net of costs</title>
 <meta name="description" content="Institutional-grade funding rate analytics across major venues, ranked by net annualised yield after execution costs. No API keys required.">
+<link rel="canonical" href="{{ site_url }}/">
+
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="FundScan">
+<meta property="og:title" content="FundScan — Funding rate intelligence, net of costs">
+<meta property="og:description" content="Institutional-grade funding rate analytics across major venues, ranked by net annualised yield after execution costs. No API keys required.">
+<meta property="og:url" content="{{ site_url }}/">
+<meta property="og:image" content="{{ site_url }}/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="FundScan — Funding rate intelligence, net of costs">
+<meta name="twitter:description" content="Institutional-grade funding rate analytics across major venues, ranked by net annualised yield after execution costs.">
+<meta name="twitter:image" content="{{ site_url }}/og-image.png">
+
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,500;0,8..60,600;1,8..60,400&family=Instrument+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -87,8 +100,18 @@ nav{position:fixed;top:0;left:0;right:0;z-index:50;display:flex;align-items:cent
 .btn-solid:hover{background:#D9B65F;border-color:#D9B65F;color:#221A08}
 .btn-big{font-size:15.5px;padding:15px 34px}
 
+/* ---------- what's new banner ---------- */
+.whatsnew{display:flex;align-items:center;justify-content:center;gap:12px;flex-wrap:wrap;
+  margin-top:67px;padding:10px 20px;background:rgba(201,165,81,.06);border-bottom:1px solid var(--hairline);
+  text-decoration:none;font-size:13px;transition:background .2s}
+.whatsnew:hover{background:rgba(201,165,81,.11)}
+.whatsnew .tag{font-family:var(--mono);font-size:10px;letter-spacing:.12em;color:#221A08;
+  background:var(--gold);padding:2px 8px;border-radius:20px;font-weight:700;flex-shrink:0}
+.whatsnew .txt{color:var(--ivory);font-weight:500}
+.whatsnew .arrow{color:var(--gold);font-family:var(--mono);font-size:11.5px;letter-spacing:.03em;flex-shrink:0}
+
 /* ---------- data strip ---------- */
-.strip-wrap{margin-top:67px;border-bottom:1px solid var(--hairline);background:rgba(15,27,48,.6);overflow:hidden}
+.strip-wrap{border-bottom:1px solid var(--hairline);background:rgba(15,27,48,.6);overflow:hidden}
 .strip{display:flex;width:max-content;animation:strip 55s linear infinite}
 .strip-wrap:hover .strip{animation-play-state:paused}
 .strip span{font-family:var(--mono);font-size:12px;letter-spacing:.02em;padding:10px 26px;white-space:nowrap;
@@ -218,6 +241,18 @@ h2{font-family:var(--serif);font-size:clamp(28px,3.6vw,46px);letter-spacing:-.01
 .plan ul li.off{color:var(--mist)}
 .plan ul li.off::before{content:"—";color:var(--mist);font-size:11px;top:3px}
 
+/* ---------- notify capture ---------- */
+.notify-form{display:flex;gap:14px;flex-wrap:wrap;align-items:center;margin-top:44px;max-width:640px}
+.notify-form input[type=email]{flex:1;min-width:220px;padding:13px 16px;background:var(--navy-2);
+  border:1px solid var(--hairline-2);border-radius:4px;color:var(--ivory);font-size:15px;font-family:var(--sans)}
+.notify-form input[type=email]:focus{outline:none;border-color:var(--gold)}
+.notify-thresh{display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:13.5px;color:var(--soft)}
+.notify-thresh input{width:64px;padding:13px 10px;background:var(--navy-2);border:1px solid var(--hairline-2);
+  border-radius:4px;color:var(--ivory);font-family:var(--mono);font-size:15px;text-align:center}
+.notify-thresh input:focus{outline:none;border-color:var(--gold)}
+.notify-note{font-family:var(--mono);font-size:11.5px;color:var(--mist);letter-spacing:.04em;margin-top:14px}
+@media (max-width:900px){.notify-form{margin-top:32px}}
+
 /* ---------- faq ---------- */
 .faq{max-width:800px;margin-top:48px}
 details{border-bottom:1px solid var(--hairline)}
@@ -283,11 +318,21 @@ footer{border-top:1px solid var(--hairline);background:rgba(15,27,48,.5)}
   <div class="nav-links">
     <a href="#truth">Methodology</a>
     <a href="#coverage">Coverage</a>
+    <a href="/accuracy">Track record</a>
+    <a href="/blog">Guides</a>
     <a href="#pricing">Pricing</a>
     <a href="#faq">Questions</a>
     <a href="/auth/request" class="btn btn-solid">Request access</a>
   </div>
 </nav>
+
+{% if latest_change %}
+<a class="whatsnew" href="/changelog">
+  <span class="tag">NEW</span>
+  <span class="txt">{{ latest_change.title }}</span>
+  <span class="arrow">See what changed →</span>
+</a>
+{% endif %}
 
 {# Strip is server-rendered — spans duplicated for seamless CSS loop animation #}
 <div class="strip-wrap" aria-hidden="true">
@@ -411,21 +456,40 @@ footer{border-top:1px solid var(--hairline);background:rgba(15,27,48,.5)}
       <a href="/auth/request" class="btn" style="width:100%;text-align:center">Begin for free</a>
     </div>
     <div class="plan pro rv rv-d2">
-      <div class="plan-badge">Recommended</div>
+      <div class="plan-badge">7-day free trial</div>
       <div class="plabel">Full service</div>
       <h3>Principal</h3>
-      <div class="price">£20<small> / month</small></div>
+      <div class="price">£20<small> / month, after trial</small></div>
       <hr class="plan-divider">
       <ul>
+        <li>7 days free, full access — cancel before billing, no charge</li>
         <li>Complete coverage, live, all venues</li>
         <li>Telegram notifications on your thresholds</li>
         <li>Seven-day rate history per instrument</li>
         <li>Illiquidity flags on statistical outliers</li>
-        <li>Cancel any time, no notice period</li>
       </ul>
-      <a href="/billing/checkout" class="btn btn-solid" style="width:100%;text-align:center">Subscribe — £20/mo</a>
+      <a href="/billing/checkout" class="btn btn-solid" style="width:100%;text-align:center">Start free trial →</a>
     </div>
   </div>
+</section>
+
+<div class="rule"><hr></div>
+
+<section id="notify">
+  <div class="rv"><div class="sec-kicker">Not ready to commit?</div>
+  <h2>Get one email when a pair crosses your number.</h2>
+  <p class="lede">No account, no card, no magic link to click. Leave an email and a threshold — we'll notify you the moment any tracked pair clears it, then leave you alone.</p></div>
+
+  <form class="notify-form rv rv-d1" method="post" action="/notify/signup">
+    <input type="email" name="email" placeholder="you@example.com" required aria-label="Email address">
+    <div class="notify-thresh">
+      <span>Net APY over</span>
+      <input type="number" name="min_net_apy" value="15" min="1" max="500" step="1" aria-label="Net APY threshold, percent">
+      <span>%</span>
+    </div>
+    <button type="submit" class="btn btn-solid">Notify me</button>
+  </form>
+  <p class="notify-note">ONE EMAIL · NO RECURRING LIST · NO MARKETING</p>
 </section>
 
 <div class="rule"><hr></div>
@@ -477,11 +541,13 @@ footer{border-top:1px solid var(--hairline);background:rgba(15,27,48,.5)}
       </svg>
       <span class="logo-word" style="font-size:16px">FundScan<i>.</i></span>
     </div>
-    <div style="display:flex;gap:28px">
+    <div style="display:flex;gap:28px;flex-wrap:wrap">
       <a href="#truth">Methodology</a>
+      <a href="/accuracy">Accuracy</a>
+      <a href="/blog">Guides</a>
+      <a href="/changelog">Changelog</a>
       <a href="/health">Status</a>
-      <a href="#">Changelog</a>
-      <a href="#">Contact</a>
+      <a href="mailto:hello@fundscan.uk">Contact</a>
     </div>
   </div>
   <p class="disclaimer">FundScan is a market-data and analytics service. It does not execute transactions, hold client assets, or provide investment advice. All figures are estimates derived from public exchange data and a standardised cost model; realised results depend on venue fee tiers, execution quality, and market conditions. Cryptoasset trading involves substantial risk and may not be subject to regulatory protection in your jurisdiction. Capital should never be committed that cannot be lost in full.</p>

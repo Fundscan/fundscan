@@ -20,10 +20,12 @@ import os
 import secrets
 from datetime import datetime, timedelta, timezone
 
+from typing import Optional
+
 import httpx
 
 from .db import get_conn
-from .auth import send_email
+from .auth import get_or_create_user, send_email
 
 log = logging.getLogger(__name__)
 
@@ -70,6 +72,56 @@ def link_telegram(code: str, chat_id: str) -> bool:
             (chat_id, row["id"]),
         )
     return True
+
+
+# ---------------------------------------------------------------------------
+# Low-friction "notify me" capture (no magic-link login required up front)
+# ---------------------------------------------------------------------------
+
+def create_notify_signup(email: str, min_net_apy_pct: float, symbol: Optional[str] = None) -> dict:
+    """
+    Landing-page "notify me when a pair crosses X% net APY" capture.
+    Creates (or reuses) a user row and an email-only alert_configs row,
+    then rides the existing check_and_send_alerts() -> send_email()
+    pipeline already wired into the fetch loop -- no new sending logic.
+
+    telegram_chat_id is stored as '' rather than left NULL:
+    _get_all_users_with_alerts() filters on
+    `telegram_chat_id NOT LIKE 'PENDING:%'`, and SQL NULL fails that
+    comparison (silently excluding the row). '' passes it, and is falsy
+    everywhere the code checks `if chat_id`, so the Telegram send is
+    skipped and only the email fires.
+    """
+    user = get_or_create_user(email.strip().lower())
+    symbol = symbol.strip().upper() if symbol and symbol.strip() else None
+    min_net_apy = min_net_apy_pct / 100
+
+    with get_conn() as conn:
+        if symbol is None:
+            existing = conn.execute(
+                "SELECT id FROM alert_configs WHERE user_id = ? AND telegram_chat_id = '' AND symbol IS NULL",
+                (user["id"],),
+            ).fetchone()
+        else:
+            existing = conn.execute(
+                "SELECT id FROM alert_configs WHERE user_id = ? AND telegram_chat_id = '' AND symbol = ?",
+                (user["id"], symbol),
+            ).fetchone()
+
+        if existing:
+            conn.execute(
+                "UPDATE alert_configs SET min_net_apy = ? WHERE id = ?",
+                (min_net_apy, existing["id"]),
+            )
+        else:
+            conn.execute(
+                """
+                INSERT INTO alert_configs (user_id, symbol, min_net_apy, telegram_chat_id)
+                VALUES (?, ?, ?, '')
+                """,
+                (user["id"], symbol, min_net_apy),
+            )
+    return user
 
 
 # ---------------------------------------------------------------------------

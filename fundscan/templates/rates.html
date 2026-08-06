@@ -12,9 +12,11 @@
 <meta property="og:title" content="Live Crypto Funding Rates — Net of Fees | FundScan">
 <meta property="og:description" content="Every perpetual funding rate across major exchanges, ranked by net annualised yield after execution costs — not the gross figure everyone else publishes.">
 <meta property="og:url" content="{{ site_url }}/rates">
-<meta name="twitter:card" content="summary">
+<meta property="og:image" content="{{ site_url }}/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="Live Crypto Funding Rates — Net of Fees | FundScan">
 <meta name="twitter:description" content="Every perpetual funding rate across major exchanges, ranked by net annualised yield after execution costs.">
+<meta name="twitter:image" content="{{ site_url }}/og-image.png">
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -91,6 +93,15 @@ tbody td{padding:.75rem 1rem;font-size:14px}
   background:linear-gradient(160deg,rgba(201,165,81,.07),transparent);text-align:center}
 .cta-band h2{font-family:var(--serif);font-size:24px;font-weight:600;margin-bottom:10px}
 .cta-band p{color:var(--soft);margin-bottom:22px}
+.notify-form{display:flex;gap:10px;flex-wrap:wrap;align-items:center;justify-content:center;max-width:560px;margin:0 auto}
+.notify-form input[type=email]{flex:1;min-width:200px;padding:12px 14px;background:var(--navy);
+  border:1px solid var(--hairline-2);border-radius:4px;color:var(--ivory);font-size:14.5px;font-family:var(--sans)}
+.notify-form input[type=email]:focus{outline:none;border-color:var(--gold)}
+.notify-thresh{display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:12.5px;color:var(--soft)}
+.notify-thresh input{width:56px;padding:12px 8px;background:var(--navy);border:1px solid var(--hairline-2);
+  border-radius:4px;color:var(--ivory);font-family:var(--mono);font-size:14.5px;text-align:center}
+.notify-thresh input:focus{outline:none;border-color:var(--gold)}
+.notify-form button{border:none;cursor:pointer}
 
 footer{border-top:1px solid var(--hairline);padding:32px;color:var(--mist);font-size:12.5px;line-height:1.75;max-width:1080px;margin:0 auto}
 footer a{color:var(--gold);text-decoration:none}
@@ -206,8 +217,16 @@ footer a{color:var(--gold);text-decoration:none}
 
   <div class="cta-band">
     <h2>Get notified when a pair crosses your threshold.</h2>
-    <p>Free tier, no API keys, no card required. Define a net-yield threshold and get a Telegram alert the moment it's crossed.</p>
-    <a href="/auth/request" class="btn">Start free →</a>
+    <p>No account, no card. Leave an email and a threshold — one email when a pair clears it, nothing recurring.</p>
+    <form class="notify-form" method="post" action="/notify/signup">
+      <input type="email" name="email" placeholder="you@example.com" required aria-label="Email address">
+      <div class="notify-thresh">
+        <span>Net APY over</span>
+        <input type="number" name="min_net_apy" value="15" min="1" max="500" step="1" aria-label="Net APY threshold, percent">
+        <span>%</span>
+      </div>
+      <button type="submit" class="btn">Notify me</button>
+    </form>
   </div>
 </main>
 
@@ -217,7 +236,7 @@ footer a{color:var(--gold);text-decoration:none}
   data and a standardised cost model; realised results depend on venue fee tiers, execution
   quality, and market conditions. Funding rates can invert and executions can slip — no return is
   assured. Cryptoasset trading involves substantial risk. ·
-  <a href="/">Home</a> · <a href="/auth/request">Sign up</a>
+  <a href="/">Home</a> · <a href="/accuracy">Accuracy</a> · <a href="/changelog">Changelog</a> · <a href="/blog">Guides</a> · <a href="/auth/request">Sign up</a>
 </footer>
 </body>
 </html>

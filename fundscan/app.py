@@ -8,7 +8,7 @@ import logging
 import os
 import time
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -18,7 +18,7 @@ import io
 import traceback
 
 from fastapi import FastAPI, Header, HTTPException, Request
-from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse, StreamingResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, RedirectResponse, StreamingResponse, Response
 from fastapi.templating import Jinja2Templates
 
 from . import math as fm
@@ -26,7 +26,9 @@ from . import sizing
 from . import pairing
 from . import signals
 from .backtest import realized_accuracy
-from .db import init_db, insert_snapshots, query_delayed, query_history, query_latest, query_sparklines, get_watchlist, toggle_watchlist, get_conn
+from .blog import get_post, published_posts
+from .changelog import ENTRIES as CHANGELOG_ENTRIES, latest_entry as latest_changelog_entry
+from .db import init_db, insert_snapshots, query_accuracy_snapshots, query_delayed, query_history, query_latest, query_sparklines, get_watchlist, toggle_watchlist, get_conn
 from .scanner import scan
 from .alerts import (check_and_send_alerts, check_anomalies, send_daily_digest,
                      check_multi_exchange, check_watchlist_drops,
@@ -174,12 +176,120 @@ def public_rates(request: Request):
     )
 
 
+ACCURACY_WINDOWS_DAYS = (1, 7, 30)
+ACCURACY_DEFAULT_DAYS = 7
+ACCURACY_MIN_SAMPLES = 3  # below this a mean is noise, not a track record
+
+
+def _accuracy_log(days: int) -> dict:
+    """
+    Aggregate backtest.realized_accuracy() across every (exchange, symbol)
+    with enough snapshot history in the window -- current headline net APY
+    vs. what was actually realized on average. This is the public,
+    unauthenticated version of the same comparison the gated dashboard
+    already draws per-row; nothing here is a new metric, just a new (and
+    honest, misses-included) place to see it in aggregate.
+    """
+    rows = query_accuracy_snapshots(days)
+    by_pair: dict[tuple, list] = {}
+    for r in rows:
+        by_pair.setdefault((r["exchange"], r["symbol"]), []).append(r)
+
+    entries = []
+    for (exchange, symbol), pair_rows in by_pair.items():
+        acc = realized_accuracy(pair_rows)
+        if not acc or acc["samples"] < ACCURACY_MIN_SAMPLES:
+            continue
+        entries.append({"exchange": exchange, "symbol": symbol, **acc})
+
+    # Largest deviation first -- the misses are the point of the page, not
+    # just the hits, so they shouldn't be buried at the bottom of a table.
+    entries.sort(key=lambda e: abs(e["gap"]), reverse=True)
+
+    if entries:
+        avg_abs_gap = sum(abs(e["gap"]) for e in entries) / len(entries)
+        within_5pt = sum(1 for e in entries if abs(e["gap"]) <= 0.05)
+        within_5pt_pct = within_5pt / len(entries)
+    else:
+        avg_abs_gap = None
+        within_5pt_pct = None
+
+    return {
+        "entries": entries,
+        "pair_count": len(entries),
+        "avg_abs_gap": avg_abs_gap,
+        "within_5pt_pct": within_5pt_pct,
+    }
+
+
+@app.get("/accuracy", response_class=HTMLResponse)
+def accuracy_log(request: Request, days: int = ACCURACY_DEFAULT_DAYS):
+    """
+    Public, unauthenticated accuracy track record: for every pair with
+    enough history in the window, current headline net APY vs. its realized
+    average -- sorted so the biggest misses show first, not the best cases.
+    """
+    if days not in ACCURACY_WINDOWS_DAYS:
+        days = ACCURACY_DEFAULT_DAYS
+    data = _accuracy_log(days)
+    return templates.TemplateResponse(
+        request,
+        "accuracy.html",
+        {
+            "site_url": SITE_URL,
+            "days": days,
+            "windows": ACCURACY_WINDOWS_DAYS,
+            "min_samples": ACCURACY_MIN_SAMPLES,
+            **data,
+        },
+    )
+
+
+@app.get("/changelog", response_class=HTMLResponse)
+def changelog(request: Request):
+    """Public changelog -- see fundscan/changelog.py for how entries are sourced."""
+    return templates.TemplateResponse(
+        request,
+        "changelog.html",
+        {"site_url": SITE_URL, "entries": CHANGELOG_ENTRIES},
+    )
+
+
+@app.get("/blog", response_class=HTMLResponse)
+def blog_index(request: Request):
+    """Public blog/guides index -- lists published posts only (see blog.py)."""
+    return templates.TemplateResponse(
+        request,
+        "blog_index.html",
+        {"site_url": SITE_URL, "posts": published_posts()},
+    )
+
+
+@app.get("/blog/{slug}", response_class=HTMLResponse)
+def blog_post(request: Request, slug: str):
+    post = get_post(slug)
+    if not post:
+        raise HTTPException(404, "Not found")
+    return templates.TemplateResponse(
+        request,
+        "blog_post.html",
+        {"site_url": SITE_URL, "post": post},
+    )
+
+
 @app.get("/sitemap.xml")
 def sitemap():
     urls = [
         (f"{SITE_URL}/", "daily", "1.0"),
         (f"{SITE_URL}/rates", "hourly", "0.9"),
+        (f"{SITE_URL}/accuracy", "daily", "0.7"),
+        (f"{SITE_URL}/changelog", "weekly", "0.5"),
     ]
+    if published_posts():
+        urls.append((f"{SITE_URL}/blog", "weekly", "0.6"))
+        urls.extend(
+            (f"{SITE_URL}/blog/{p.slug}", "monthly", "0.5") for p in published_posts()
+        )
     body = (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
         '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
@@ -199,6 +309,9 @@ def robots_txt():
         "User-agent: *\n"
         "Allow: /\n"
         "Allow: /rates\n"
+        "Allow: /accuracy\n"
+        "Allow: /blog\n"
+        "Allow: /changelog\n"
         "Disallow: /app\n"
         "Disallow: /account\n"
         "Disallow: /admin\n"
@@ -210,6 +323,15 @@ def robots_txt():
         f"Sitemap: {SITE_URL}/sitemap.xml\n"
     )
     return PlainTextResponse(content=body)
+
+
+OG_IMAGE_PATH = Path(__file__).parent.parent / "fundscan_banner.png"
+
+
+@app.get("/og-image.png")
+def og_image():
+    """Shared social-preview image for og:image/twitter:image across public pages."""
+    return FileResponse(OG_IMAGE_PATH, media_type="image/png")
 
 
 @app.get("/rates/{symbol}")
@@ -502,23 +624,52 @@ def _current_user(request: Request) -> Optional[dict]:
     return get_user_by_id(uid)
 
 
-FREE_TIER_LIMIT = 25
+FREE_TIER_LIMIT = 5
+FREE_TIER_DELAY_MINUTES = 10
 
 
 def _tier_results(user: Optional[dict]) -> tuple[list[dict], list[dict]]:
     """
     Return (visible_results, locked_results).
 
-    Pro  → (full list, [])
-    Free → (top 5, remaining rows as blurred placeholders)
-    """
-    results = _state["results"]
-    if user and user.get("tier") == "pro":
-        return results, []
+    Pro  → (full live list, [])
+    Free → (top 5 pairs by net APY, delayed >=10 minutes; everything else
+            from the live list as blurred locked preview rows)
 
-    if not results:
-        return [], []
-    return results[:FREE_TIER_LIMIT], results[FREE_TIER_LIMIT:]
+    Delayed rows are reconstructed from stored snapshots the same way
+    scanner.scan() builds a live row (see fm.net_apy / fm.breakeven_cycles
+    usage there) -- but funding_snapshots only ever persisted rate_8h and
+    the already-computed net_apy, never order-book depth or 24h volume.
+    So a delayed row has no liquidity_flag / liquidity_pct / net_apy_at_size
+    of its own; downstream rendering already treats those as optional
+    (`_liquidity_badge` defaults to "red", `net_apy_at_size` falls back to
+    `net_apy`), so a delayed free-tier row degrades to the conservative
+    default rather than crashing or showing a fabricated sized figure.
+    """
+    live = _state["results"]
+    if user and user.get("tier") == "pro":
+        return live, []
+
+    delayed_rows = query_delayed(FREE_TIER_DELAY_MINUTES)
+    visible = [
+        {
+            "exchange": r["exchange"],
+            "symbol": r["symbol"],
+            "rate_8h": r["rate_8h"],
+            "net_apy": r["net_apy"],
+            "gross_apy": fm.annualised_gross(r["rate_8h"]),
+            "breakeven_cycles": fm.breakeven_cycles(r["rate_8h"], r["exchange"]),
+            "is_profitable": fm.is_profitable(r["rate_8h"], r["exchange"]),
+            "fetched_at": r["ts"],
+        }
+        for r in delayed_rows[:FREE_TIER_LIMIT]
+    ]
+
+    if not live:
+        return visible, []
+    shown = {(r["exchange"], r["symbol"]) for r in visible}
+    locked = [r for r in live if (r["exchange"], r["symbol"]) not in shown]
+    return visible, locked
 
 
 # ---------------------------------------------------------------------------
@@ -639,7 +790,7 @@ def _render_table_rows(results: list[dict], locked: list[dict] | None = None) ->
         rows.append(
             f'<tr><td colspan="8" style="padding:.75rem 1rem 1.25rem;text-align:center">'
             f'<a href="/billing/checkout" class="pro-unlock-btn">'
-            f'Unlock {len(locked)} more pairs — Upgrade to Pro</a>'
+            f'Unlock {len(locked)} more pairs — start your free trial</a>'
             f'</td></tr>'
         )
 
@@ -717,9 +868,11 @@ def root(request: Request):
         request,
         "landing.html",
         {
+            "site_url": SITE_URL,
             "strip_html": _build_strip_html(results),
             "board_rows": _build_board_rows(results),
             "pairs_count": len(results),
+            "latest_change": latest_changelog_entry(),
         },
     )
 
@@ -744,6 +897,56 @@ def dashboard(request: Request):
             **_fee_model_context(),
         },
     )
+
+
+# ---------------------------------------------------------------------------
+# Notify-me signup — low-friction email capture, no login required
+# ---------------------------------------------------------------------------
+
+NOTIFY_MIN_PCT = 1.0
+NOTIFY_MAX_PCT = 500.0
+NOTIFY_DEFAULT_PCT = 15.0
+
+
+@app.post("/notify/signup", response_class=HTMLResponse)
+async def notify_signup(request: Request):
+    """
+    "Notify me when a pair crosses X% net APY" — captures an email without
+    the magic-link auth flow. See alerts.create_notify_signup for how this
+    rides the existing threshold-alert/email pipeline.
+    """
+    form = await request.form()
+    email = str(form.get("email", "")).strip()
+    symbol = str(form.get("symbol", "")).strip().upper() or None
+
+    try:
+        threshold = float(form.get("min_net_apy", NOTIFY_DEFAULT_PCT))
+    except (TypeError, ValueError):
+        threshold = NOTIFY_DEFAULT_PCT
+    threshold = max(NOTIFY_MIN_PCT, min(threshold, NOTIFY_MAX_PCT))
+
+    if not email or "@" not in email:
+        return RedirectResponse("/#notify", status_code=302)
+
+    from .alerts import create_notify_signup
+    create_notify_signup(email, threshold, symbol)
+
+    pair_label = symbol if symbol else "any pair"
+    return HTMLResponse(f"""<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><title>You're on the list — FundScan</title>
+<style>body{{background:#0A1424;color:#EEF1F6;font-family:system-ui,sans-serif;
+  display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;padding:2rem 1rem}}
+.box{{max-width:420px;padding:2.5rem;border:1px solid rgba(167,178,196,.13);border-radius:8px;background:#0F1B30}}
+h1{{font-size:1.2rem;margin-bottom:.5rem}}
+p{{color:#A7B2C4;margin:.75rem 0;font-size:.95rem;line-height:1.6}}
+a{{color:#C9A551;text-decoration:none}}</style></head>
+<body><div class="box">
+<h1>You're on the list</h1>
+<p>We'll email <strong style="color:#EEF1F6">{email}</strong> the moment {pair_label} clears
+<strong style="color:#EEF1F6">{threshold:.0f}% net APY</strong> on any venue we track. One email —
+no recurring list, no marketing.</p>
+<p style="margin-top:1.5rem"><a href="/">← Back to home</a> &nbsp;·&nbsp; <a href="/auth/request">Want live data + Telegram alerts instead? →</a></p>
+</div></body></html>""")
 
 
 # ---------------------------------------------------------------------------
@@ -907,6 +1110,10 @@ def billing_return(request: Request, session_id: str = ""):
     """Post-payment landing page after Stripe embedded checkout completes."""
     user = _current_user(request)
     name = user["email"].split("@")[0] if user else "there"
+    from .billing import TRIAL_PERIOD_DAYS
+    trial_end_str = (
+        datetime.now(timezone.utc) + timedelta(days=TRIAL_PERIOD_DAYS)
+    ).strftime("%-d %B %Y")
     return HTMLResponse(f"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"><title>Welcome to Pro — FundScan</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -937,7 +1144,7 @@ p{{color:var(--soft);font-size:15px;line-height:1.7;margin-bottom:2rem}}
     <svg width="28" height="28" viewBox="0 0 28 28" fill="none"><path d="M6 14l5.5 5.5L22 9" stroke="#3FBE8E" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
   </div>
   <h1>Welcome to <span>Pro</span></h1>
-  <p>You're all set, {name}. Your account has been upgraded — all pairs, live alerts, and CSV export are now unlocked.</p>
+  <p>You're all set, {name}. Your 7-day free trial has started — all pairs, live alerts, and CSV export are unlocked now. First charge is {trial_end_str}; cancel any time before then from your account page and you won't be billed.</p>
   <a href="/app" class="btn">Go to dashboard →</a>
 </div>
 <script>
@@ -1000,22 +1207,30 @@ def account(request: Request):
 
     tier = user["tier"]
     base_url = os.getenv("BASE_URL", "http://localhost:8000")
+    trial_html = ""
     if tier == "pro":
         plan_html = '<span style="color:#22c55e;font-weight:600">Pro</span>'
         stripe_key = os.getenv("STRIPE_SECRET_KEY", "")
         if stripe_key:
             try:
-                from .billing import portal_url
+                from .billing import portal_url, trial_info
                 manage_url = portal_url(user["email"], return_url=f"{base_url}/account")
+                trial = trial_info(user["email"])
+                if trial:
+                    trial_html = (
+                        f'<div class="row"><span class="label">Trial</span>'
+                        f'<span style="color:#C9A551">Ends {trial["trial_end"].strftime("%-d %b %Y")} '
+                        f'— first charge then</span></div>'
+                    )
             except Exception as e:
-                log.warning("Stripe portal session failed for %s: %s", user["email"], e)
+                log.warning("Stripe portal/trial lookup failed for %s: %s", user["email"], e)
                 manage_url = "/account"
         else:
             manage_url = "/account"
         action_html = f'<a href="{manage_url}" style="color:#C9A551">Manage subscription →</a>'
     else:
         plan_html = "Free"
-        action_html = '<a href="/billing/checkout" style="color:#C9A551;font-weight:600">Upgrade to Pro — £20/month →</a>'
+        action_html = '<a href="/billing/checkout" style="color:#C9A551;font-weight:600">Start 7-day free trial — then £20/month →</a>'
 
     # Telegram section
     from .db import get_conn as _get_conn
@@ -1086,6 +1301,7 @@ a.signout:hover{{color:#EEF1F6}}
 <h1>Account</h1>
 <div class="row"><span class="label">Email</span><span>{user["email"]}</span></div>
 <div class="row"><span class="label">Plan</span><span>{plan_html}</span></div>
+{trial_html}
 <div class="row" style="border:none;padding-top:1.25rem">{action_html}</div>
 {tg_html}
 {wl_html}

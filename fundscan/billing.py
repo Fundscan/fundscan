@@ -10,11 +10,17 @@ Webhook events handled:
   checkout.session.completed     → set user tier = pro
   customer.subscription.deleted  → set user tier = free
   invoice.payment_failed         → log warning
+
+Checkout includes a TRIAL_PERIOD_DAYS free trial (card required up front).
+Stripe delays the first charge itself and fires the same
+checkout.session.completed / customer.subscription.deleted events either
+way, so no separate trial-tracking logic is needed here.
 """
 import json
 import logging
 import os
 from datetime import datetime, timezone
+from typing import Optional
 
 import stripe
 
@@ -27,6 +33,11 @@ log = logging.getLogger(__name__)
 STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY") or os.getenv("SECRET_KEY", "")
 STRIPE_PRICE_ID = os.getenv("STRIPE_PRICE_ID", "")
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")
+
+# Card required up front; Stripe delays the first charge to day 7 and
+# handles the trial→paid transition itself (no cron/downgrade job needed —
+# customer.subscription.deleted already covers cancellation either way).
+TRIAL_PERIOD_DAYS = 7
 
 
 def portal_url(email: str, return_url: str) -> str:
@@ -67,7 +78,8 @@ def checkout_url(email: str) -> str:
 
 def create_embedded_session(email: str) -> str:
     """
-    Create a Stripe Checkout Session in embedded mode.
+    Create a Stripe Checkout Session in embedded mode, with a
+    TRIAL_PERIOD_DAYS free trial before the first charge.
     Returns client_secret for Stripe.js initEmbeddedCheckout().
     """
     stripe.api_key = STRIPE_SECRET_KEY
@@ -78,9 +90,26 @@ def create_embedded_session(email: str) -> str:
         customer_email=email,
         client_reference_id=email,
         line_items=[{"price": STRIPE_PRICE_ID, "quantity": 1}],
+        subscription_data={"trial_period_days": TRIAL_PERIOD_DAYS},
         return_url=f"{base}/billing/return?session_id={{CHECKOUT_SESSION_ID}}",
     )
     return session.client_secret
+
+
+def trial_info(email: str) -> Optional[dict]:
+    """
+    If this customer has a subscription currently in trial, return
+    {"trial_end": datetime}; otherwise None. One Stripe read -- called
+    from /account only, not on every request.
+    """
+    stripe.api_key = STRIPE_SECRET_KEY
+    customers = stripe.Customer.list(email=email, limit=1)
+    if not customers.data:
+        return None
+    subs = stripe.Subscription.list(customer=customers.data[0].id, status="trialing", limit=1)
+    if not subs.data or not subs.data[0].trial_end:
+        return None
+    return {"trial_end": datetime.fromtimestamp(subs.data[0].trial_end, tz=timezone.utc)}
 
 
 def verify_webhook(body: bytes, sig_header: str) -> stripe.Event:
