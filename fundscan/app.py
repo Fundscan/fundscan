@@ -26,7 +26,9 @@ from . import sizing
 from . import pairing
 from . import signals
 from .backtest import realized_accuracy
-from .db import init_db, insert_snapshots, query_delayed, query_history, query_latest, query_sparklines, get_watchlist, toggle_watchlist, get_conn
+from .blog import get_post, published_posts
+from .changelog import ENTRIES as CHANGELOG_ENTRIES, latest_entry as latest_changelog_entry
+from .db import init_db, insert_snapshots, query_accuracy_snapshots, query_delayed, query_history, query_latest, query_sparklines, get_watchlist, toggle_watchlist, get_conn
 from .scanner import scan
 from .alerts import (check_and_send_alerts, check_anomalies, send_daily_digest,
                      check_multi_exchange, check_watchlist_drops,
@@ -174,12 +176,120 @@ def public_rates(request: Request):
     )
 
 
+ACCURACY_WINDOWS_DAYS = (1, 7, 30)
+ACCURACY_DEFAULT_DAYS = 7
+ACCURACY_MIN_SAMPLES = 3  # below this a mean is noise, not a track record
+
+
+def _accuracy_log(days: int) -> dict:
+    """
+    Aggregate backtest.realized_accuracy() across every (exchange, symbol)
+    with enough snapshot history in the window -- current headline net APY
+    vs. what was actually realized on average. This is the public,
+    unauthenticated version of the same comparison the gated dashboard
+    already draws per-row; nothing here is a new metric, just a new (and
+    honest, misses-included) place to see it in aggregate.
+    """
+    rows = query_accuracy_snapshots(days)
+    by_pair: dict[tuple, list] = {}
+    for r in rows:
+        by_pair.setdefault((r["exchange"], r["symbol"]), []).append(r)
+
+    entries = []
+    for (exchange, symbol), pair_rows in by_pair.items():
+        acc = realized_accuracy(pair_rows)
+        if not acc or acc["samples"] < ACCURACY_MIN_SAMPLES:
+            continue
+        entries.append({"exchange": exchange, "symbol": symbol, **acc})
+
+    # Largest deviation first -- the misses are the point of the page, not
+    # just the hits, so they shouldn't be buried at the bottom of a table.
+    entries.sort(key=lambda e: abs(e["gap"]), reverse=True)
+
+    if entries:
+        avg_abs_gap = sum(abs(e["gap"]) for e in entries) / len(entries)
+        within_5pt = sum(1 for e in entries if abs(e["gap"]) <= 0.05)
+        within_5pt_pct = within_5pt / len(entries)
+    else:
+        avg_abs_gap = None
+        within_5pt_pct = None
+
+    return {
+        "entries": entries,
+        "pair_count": len(entries),
+        "avg_abs_gap": avg_abs_gap,
+        "within_5pt_pct": within_5pt_pct,
+    }
+
+
+@app.get("/accuracy", response_class=HTMLResponse)
+def accuracy_log(request: Request, days: int = ACCURACY_DEFAULT_DAYS):
+    """
+    Public, unauthenticated accuracy track record: for every pair with
+    enough history in the window, current headline net APY vs. its realized
+    average -- sorted so the biggest misses show first, not the best cases.
+    """
+    if days not in ACCURACY_WINDOWS_DAYS:
+        days = ACCURACY_DEFAULT_DAYS
+    data = _accuracy_log(days)
+    return templates.TemplateResponse(
+        request,
+        "accuracy.html",
+        {
+            "site_url": SITE_URL,
+            "days": days,
+            "windows": ACCURACY_WINDOWS_DAYS,
+            "min_samples": ACCURACY_MIN_SAMPLES,
+            **data,
+        },
+    )
+
+
+@app.get("/changelog", response_class=HTMLResponse)
+def changelog(request: Request):
+    """Public changelog -- see fundscan/changelog.py for how entries are sourced."""
+    return templates.TemplateResponse(
+        request,
+        "changelog.html",
+        {"site_url": SITE_URL, "entries": CHANGELOG_ENTRIES},
+    )
+
+
+@app.get("/blog", response_class=HTMLResponse)
+def blog_index(request: Request):
+    """Public blog/guides index -- lists published posts only (see blog.py)."""
+    return templates.TemplateResponse(
+        request,
+        "blog_index.html",
+        {"site_url": SITE_URL, "posts": published_posts()},
+    )
+
+
+@app.get("/blog/{slug}", response_class=HTMLResponse)
+def blog_post(request: Request, slug: str):
+    post = get_post(slug)
+    if not post:
+        raise HTTPException(404, "Not found")
+    return templates.TemplateResponse(
+        request,
+        "blog_post.html",
+        {"site_url": SITE_URL, "post": post},
+    )
+
+
 @app.get("/sitemap.xml")
 def sitemap():
     urls = [
         (f"{SITE_URL}/", "daily", "1.0"),
         (f"{SITE_URL}/rates", "hourly", "0.9"),
+        (f"{SITE_URL}/accuracy", "daily", "0.7"),
+        (f"{SITE_URL}/changelog", "weekly", "0.5"),
     ]
+    if published_posts():
+        urls.append((f"{SITE_URL}/blog", "weekly", "0.6"))
+        urls.extend(
+            (f"{SITE_URL}/blog/{p.slug}", "monthly", "0.5") for p in published_posts()
+        )
     body = (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
         '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
@@ -199,6 +309,9 @@ def robots_txt():
         "User-agent: *\n"
         "Allow: /\n"
         "Allow: /rates\n"
+        "Allow: /accuracy\n"
+        "Allow: /blog\n"
+        "Allow: /changelog\n"
         "Disallow: /app\n"
         "Disallow: /account\n"
         "Disallow: /admin\n"
@@ -720,6 +833,7 @@ def root(request: Request):
             "strip_html": _build_strip_html(results),
             "board_rows": _build_board_rows(results),
             "pairs_count": len(results),
+            "latest_change": latest_changelog_entry(),
         },
     )
 
@@ -744,6 +858,56 @@ def dashboard(request: Request):
             **_fee_model_context(),
         },
     )
+
+
+# ---------------------------------------------------------------------------
+# Notify-me signup — low-friction email capture, no login required
+# ---------------------------------------------------------------------------
+
+NOTIFY_MIN_PCT = 1.0
+NOTIFY_MAX_PCT = 500.0
+NOTIFY_DEFAULT_PCT = 15.0
+
+
+@app.post("/notify/signup", response_class=HTMLResponse)
+async def notify_signup(request: Request):
+    """
+    "Notify me when a pair crosses X% net APY" — captures an email without
+    the magic-link auth flow. See alerts.create_notify_signup for how this
+    rides the existing threshold-alert/email pipeline.
+    """
+    form = await request.form()
+    email = str(form.get("email", "")).strip()
+    symbol = str(form.get("symbol", "")).strip().upper() or None
+
+    try:
+        threshold = float(form.get("min_net_apy", NOTIFY_DEFAULT_PCT))
+    except (TypeError, ValueError):
+        threshold = NOTIFY_DEFAULT_PCT
+    threshold = max(NOTIFY_MIN_PCT, min(threshold, NOTIFY_MAX_PCT))
+
+    if not email or "@" not in email:
+        return RedirectResponse("/#notify", status_code=302)
+
+    from .alerts import create_notify_signup
+    create_notify_signup(email, threshold, symbol)
+
+    pair_label = symbol if symbol else "any pair"
+    return HTMLResponse(f"""<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><title>You're on the list — FundScan</title>
+<style>body{{background:#0A1424;color:#EEF1F6;font-family:system-ui,sans-serif;
+  display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;padding:2rem 1rem}}
+.box{{max-width:420px;padding:2.5rem;border:1px solid rgba(167,178,196,.13);border-radius:8px;background:#0F1B30}}
+h1{{font-size:1.2rem;margin-bottom:.5rem}}
+p{{color:#A7B2C4;margin:.75rem 0;font-size:.95rem;line-height:1.6}}
+a{{color:#C9A551;text-decoration:none}}</style></head>
+<body><div class="box">
+<h1>You're on the list</h1>
+<p>We'll email <strong style="color:#EEF1F6">{email}</strong> the moment {pair_label} clears
+<strong style="color:#EEF1F6">{threshold:.0f}% net APY</strong> on any venue we track. One email —
+no recurring list, no marketing.</p>
+<p style="margin-top:1.5rem"><a href="/">← Back to home</a> &nbsp;·&nbsp; <a href="/auth/request">Want live data + Telegram alerts instead? →</a></p>
+</div></body></html>""")
 
 
 # ---------------------------------------------------------------------------

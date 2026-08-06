@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Changelog — What's Changed | FundScan</title>
+<meta name="description" content="What's shipped on FundScan, in order — coverage additions, fee-model corrections, and product changes, dated.">
+<link rel="canonical" href="{{ site_url }}/changelog">
+
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="FundScan">
+<meta property="og:title" content="Changelog — FundScan">
+<meta property="og:description" content="What's shipped on FundScan, in order, dated.">
+<meta property="og:url" content="{{ site_url }}/changelog">
+<meta name="twitter:card" content="summary">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,500;0,8..60,600;1,8..60,400&family=Instrument+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --navy:#0A1424; --navy-2:#0F1B30; --ivory:#EEF1F6; --soft:#A7B2C4; --mist:#67748A;
+  --hairline:rgba(167,178,196,.13); --hairline-2:rgba(167,178,196,.24);
+  --gold:#C9A551; --green:#3FBE8E;
+  --serif:'Source Serif 4',Georgia,serif;
+  --sans:'Instrument Sans',system-ui,sans-serif;
+  --mono:'IBM Plex Mono',ui-monospace,monospace;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--navy);color:var(--ivory);font-family:var(--sans);font-size:16px;
+     line-height:1.6;-webkit-font-smoothing:antialiased;overflow-x:hidden}
+a{color:inherit}
+::selection{background:var(--gold);color:var(--navy)}
+.ambient{position:fixed;inset:0;z-index:-2;pointer-events:none;
+  background:radial-gradient(900px 500px at 15% -5%,rgba(201,165,81,.055),transparent 60%),
+    radial-gradient(1100px 600px at 90% 15%,rgba(63,190,142,.04),transparent 60%)}
+
+nav{position:sticky;top:0;z-index:50;display:flex;align-items:center;justify-content:space-between;
+    padding:16px 32px;background:rgba(10,20,36,.82);backdrop-filter:blur(18px);border-bottom:1px solid var(--hairline)}
+.logo{display:flex;align-items:center;gap:10px;text-decoration:none}
+.logo-word{font-family:var(--serif);font-weight:600;font-size:19px;letter-spacing:-.01em}
+.logo-word i{font-style:normal;color:var(--gold)}
+.btn{display:inline-block;font-family:var(--sans);font-weight:500;font-size:14px;text-decoration:none;
+  padding:10px 20px;border-radius:4px;border:1px solid var(--hairline-2);color:var(--ivory);transition:all .2s ease}
+.btn:hover{border-color:var(--gold);color:var(--gold)}
+
+main{max-width:760px;margin:0 auto;padding:56px 32px 40px}
+.kicker{font-family:var(--mono);font-size:11.5px;letter-spacing:.2em;text-transform:uppercase;color:var(--gold);margin-bottom:22px}
+h1{font-family:var(--serif);font-size:clamp(30px,4.2vw,44px);font-weight:500;letter-spacing:-.015em;margin-bottom:18px}
+.lede{color:var(--soft);font-size:17px;line-height:1.75;margin-bottom:48px;max-width:600px}
+
+.timeline{position:relative;padding-left:28px;border-left:1px solid var(--hairline)}
+.entry{position:relative;padding-bottom:38px}
+.entry:last-child{padding-bottom:0}
+.entry::before{content:"";position:absolute;left:-33px;top:5px;width:9px;height:9px;border-radius:50%;
+  background:var(--navy);border:2px solid var(--gold)}
+.entry .date{font-family:var(--mono);font-size:12px;color:var(--mist);letter-spacing:.06em;display:block;margin-bottom:8px}
+.entry h2{font-family:var(--serif);font-size:19px;font-weight:600;margin-bottom:8px;color:var(--ivory)}
+.entry p{color:var(--soft);font-size:14.5px;max-width:560px}
+
+footer{border-top:1px solid var(--hairline);padding:32px;color:var(--mist);font-size:12.5px;line-height:1.75;max-width:760px;margin:20px auto 0}
+footer a{color:var(--gold);text-decoration:none}
+
+@media(max-width:700px){nav,main,footer{padding-left:18px;padding-right:18px}}
+</style>
+</head>
+<body>
+<div class="ambient" aria-hidden="true"></div>
+
+<nav>
+  <a class="logo" href="/" aria-label="FundScan home">
+    <svg width="24" height="24" viewBox="0 0 34 34" aria-hidden="true">
+      <circle cx="17" cy="17" r="15.5" fill="none" stroke="#C9A551" stroke-width="1.6"/>
+      <path d="M10 21 L15 16 L19 19 L24 12" fill="none" stroke="#3FBE8E" stroke-width="2.2" stroke-linecap="round"/>
+      <circle cx="24" cy="12" r="2" fill="#3FBE8E"/>
+    </svg>
+    <span class="logo-word">FundScan<i>.</i></span>
+  </a>
+  <a href="/rates" class="btn">Live rates →</a>
+</nav>
+
+<main>
+  <div class="kicker">What's changed</div>
+  <h1>Changelog.</h1>
+  <p class="lede">Coverage additions, fee-model corrections, and product changes, in order. Curated from the actual commit history — not every internal fix, but every user-facing change.</p>
+
+  <div class="timeline">
+    {% for e in entries %}
+    <div class="entry">
+      <span class="date">{{ e.date }}</span>
+      <h2>{{ e.title }}</h2>
+      <p>{{ e.detail }}</p>
+    </div>
+    {% endfor %}
+  </div>
+</main>
+
+<footer>
+  <a href="/">Home</a> · <a href="/accuracy">Accuracy</a> · <a href="/rates">Live rates</a> · <a href="/blog">Guides</a>
+</footer>
+</body>
+</html>

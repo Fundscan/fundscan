@@ -220,6 +220,26 @@ def toggle_watchlist(user_id: int, symbol: str, exchange: str) -> bool:
             return True
 
 
+def query_accuracy_snapshots(days: int = 7) -> list[sqlite3.Row]:
+    """
+    All snapshot rows within the window, across every tracked pair -- the
+    raw material for a per-pair realized-accuracy comparison (see
+    backtest.realized_accuracy). Grouped/ordered by (exchange, symbol) then
+    chronologically within each group, matching what realized_accuracy()
+    expects (last row = "current").
+    """
+    with get_conn() as conn:
+        return conn.execute(
+            """
+            SELECT ts, exchange, symbol, net_apy
+            FROM funding_snapshots
+            WHERE ts >= datetime('now', ?)
+            ORDER BY exchange, symbol, ts ASC
+            """,
+            (f"-{days} days",),
+        ).fetchall()
+
+
 def query_sparklines(hours: int = 24) -> dict[str, list[float]]:
     """
     Return the last `hours` of net_apy per (exchange, symbol), downsampled
