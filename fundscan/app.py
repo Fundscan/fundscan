@@ -8,7 +8,7 @@ import logging
 import os
 import time
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -615,23 +615,52 @@ def _current_user(request: Request) -> Optional[dict]:
     return get_user_by_id(uid)
 
 
-FREE_TIER_LIMIT = 25
+FREE_TIER_LIMIT = 5
+FREE_TIER_DELAY_MINUTES = 10
 
 
 def _tier_results(user: Optional[dict]) -> tuple[list[dict], list[dict]]:
     """
     Return (visible_results, locked_results).
 
-    Pro  → (full list, [])
-    Free → (top 5, remaining rows as blurred placeholders)
-    """
-    results = _state["results"]
-    if user and user.get("tier") == "pro":
-        return results, []
+    Pro  → (full live list, [])
+    Free → (top 5 pairs by net APY, delayed >=10 minutes; everything else
+            from the live list as blurred locked preview rows)
 
-    if not results:
-        return [], []
-    return results[:FREE_TIER_LIMIT], results[FREE_TIER_LIMIT:]
+    Delayed rows are reconstructed from stored snapshots the same way
+    scanner.scan() builds a live row (see fm.net_apy / fm.breakeven_cycles
+    usage there) -- but funding_snapshots only ever persisted rate_8h and
+    the already-computed net_apy, never order-book depth or 24h volume.
+    So a delayed row has no liquidity_flag / liquidity_pct / net_apy_at_size
+    of its own; downstream rendering already treats those as optional
+    (`_liquidity_badge` defaults to "red", `net_apy_at_size` falls back to
+    `net_apy`), so a delayed free-tier row degrades to the conservative
+    default rather than crashing or showing a fabricated sized figure.
+    """
+    live = _state["results"]
+    if user and user.get("tier") == "pro":
+        return live, []
+
+    delayed_rows = query_delayed(FREE_TIER_DELAY_MINUTES)
+    visible = [
+        {
+            "exchange": r["exchange"],
+            "symbol": r["symbol"],
+            "rate_8h": r["rate_8h"],
+            "net_apy": r["net_apy"],
+            "gross_apy": fm.annualised_gross(r["rate_8h"]),
+            "breakeven_cycles": fm.breakeven_cycles(r["rate_8h"], r["exchange"]),
+            "is_profitable": fm.is_profitable(r["rate_8h"], r["exchange"]),
+            "fetched_at": r["ts"],
+        }
+        for r in delayed_rows[:FREE_TIER_LIMIT]
+    ]
+
+    if not live:
+        return visible, []
+    shown = {(r["exchange"], r["symbol"]) for r in visible}
+    locked = [r for r in live if (r["exchange"], r["symbol"]) not in shown]
+    return visible, locked
 
 
 # ---------------------------------------------------------------------------
@@ -752,7 +781,7 @@ def _render_table_rows(results: list[dict], locked: list[dict] | None = None) ->
         rows.append(
             f'<tr><td colspan="8" style="padding:.75rem 1rem 1.25rem;text-align:center">'
             f'<a href="/billing/checkout" class="pro-unlock-btn">'
-            f'Unlock {len(locked)} more pairs — Upgrade to Pro</a>'
+            f'Unlock {len(locked)} more pairs — start your free trial</a>'
             f'</td></tr>'
         )
 
@@ -1071,6 +1100,10 @@ def billing_return(request: Request, session_id: str = ""):
     """Post-payment landing page after Stripe embedded checkout completes."""
     user = _current_user(request)
     name = user["email"].split("@")[0] if user else "there"
+    from .billing import TRIAL_PERIOD_DAYS
+    trial_end_str = (
+        datetime.now(timezone.utc) + timedelta(days=TRIAL_PERIOD_DAYS)
+    ).strftime("%-d %B %Y")
     return HTMLResponse(f"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"><title>Welcome to Pro — FundScan</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -1101,7 +1134,7 @@ p{{color:var(--soft);font-size:15px;line-height:1.7;margin-bottom:2rem}}
     <svg width="28" height="28" viewBox="0 0 28 28" fill="none"><path d="M6 14l5.5 5.5L22 9" stroke="#3FBE8E" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
   </div>
   <h1>Welcome to <span>Pro</span></h1>
-  <p>You're all set, {name}. Your account has been upgraded — all pairs, live alerts, and CSV export are now unlocked.</p>
+  <p>You're all set, {name}. Your 7-day free trial has started — all pairs, live alerts, and CSV export are unlocked now. First charge is {trial_end_str}; cancel any time before then from your account page and you won't be billed.</p>
   <a href="/app" class="btn">Go to dashboard →</a>
 </div>
 <script>
@@ -1164,22 +1197,30 @@ def account(request: Request):
 
     tier = user["tier"]
     base_url = os.getenv("BASE_URL", "http://localhost:8000")
+    trial_html = ""
     if tier == "pro":
         plan_html = '<span style="color:#22c55e;font-weight:600">Pro</span>'
         stripe_key = os.getenv("STRIPE_SECRET_KEY", "")
         if stripe_key:
             try:
-                from .billing import portal_url
+                from .billing import portal_url, trial_info
                 manage_url = portal_url(user["email"], return_url=f"{base_url}/account")
+                trial = trial_info(user["email"])
+                if trial:
+                    trial_html = (
+                        f'<div class="row"><span class="label">Trial</span>'
+                        f'<span style="color:#C9A551">Ends {trial["trial_end"].strftime("%-d %b %Y")} '
+                        f'— first charge then</span></div>'
+                    )
             except Exception as e:
-                log.warning("Stripe portal session failed for %s: %s", user["email"], e)
+                log.warning("Stripe portal/trial lookup failed for %s: %s", user["email"], e)
                 manage_url = "/account"
         else:
             manage_url = "/account"
         action_html = f'<a href="{manage_url}" style="color:#C9A551">Manage subscription →</a>'
     else:
         plan_html = "Free"
-        action_html = '<a href="/billing/checkout" style="color:#C9A551;font-weight:600">Upgrade to Pro — £20/month →</a>'
+        action_html = '<a href="/billing/checkout" style="color:#C9A551;font-weight:600">Start 7-day free trial — then £20/month →</a>'
 
     # Telegram section
     from .db import get_conn as _get_conn
@@ -1250,6 +1291,7 @@ a.signout:hover{{color:#EEF1F6}}
 <h1>Account</h1>
 <div class="row"><span class="label">Email</span><span>{user["email"]}</span></div>
 <div class="row"><span class="label">Plan</span><span>{plan_html}</span></div>
+{trial_html}
 <div class="row" style="border:none;padding-top:1.25rem">{action_html}</div>
 {tg_html}
 {wl_html}

@@ -151,6 +151,15 @@ def query_delayed(delay_minutes: int = 10) -> list[sqlite3.Row]:
     Most recent snapshot per (exchange, symbol) that is at least
     `delay_minutes` old — used for the free tier.
     Returns [] if no qualifying snapshots exist yet.
+
+    `ts` is stored as Python's ISO-8601 (`T` separator, `+00:00` offset,
+    e.g. "2026-08-06T07:04:53.462+00:00"), but `datetime('now', ...)`
+    returns SQLite's own format ("2026-08-06 07:04:53" — space-separated,
+    no offset). Comparing those two formats as raw strings is wrong: 'T'
+    (0x54) sorts after ' ' (0x20), so `ts <= datetime('now', ...)` was
+    false for every row regardless of actual time, silently returning no
+    rows. Wrapping `ts` in `datetime(...)` normalizes both sides to the
+    same format before comparing.
     """
     with get_conn() as conn:
         return conn.execute(
@@ -160,7 +169,7 @@ def query_delayed(delay_minutes: int = 10) -> list[sqlite3.Row]:
             INNER JOIN (
                 SELECT exchange, symbol, MAX(ts) AS max_ts
                 FROM funding_snapshots
-                WHERE ts <= datetime('now', ?)
+                WHERE datetime(ts) <= datetime('now', ?)
                 GROUP BY exchange, symbol
             ) latest ON s.exchange = latest.exchange
                      AND s.symbol  = latest.symbol
@@ -178,7 +187,7 @@ def query_history(symbol: str, days: int = 7) -> list[sqlite3.Row]:
             SELECT ts, exchange, rate_8h, net_apy
             FROM funding_snapshots
             WHERE symbol = ?
-              AND ts >= datetime('now', ?)
+              AND datetime(ts) >= datetime('now', ?)
             ORDER BY ts ASC
             """,
             (symbol, f"-{days} days"),
@@ -233,7 +242,7 @@ def query_accuracy_snapshots(days: int = 7) -> list[sqlite3.Row]:
             """
             SELECT ts, exchange, symbol, net_apy
             FROM funding_snapshots
-            WHERE ts >= datetime('now', ?)
+            WHERE datetime(ts) >= datetime('now', ?)
             ORDER BY exchange, symbol, ts ASC
             """,
             (f"-{days} days",),
@@ -251,7 +260,7 @@ def query_sparklines(hours: int = 24) -> dict[str, list[float]]:
             """
             SELECT exchange, symbol, net_apy
             FROM funding_snapshots
-            WHERE ts >= datetime('now', ?)
+            WHERE datetime(ts) >= datetime('now', ?)
             ORDER BY exchange, symbol, ts ASC
             """,
             (f"-{hours} hours",),
