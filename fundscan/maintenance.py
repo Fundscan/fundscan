@@ -23,6 +23,18 @@ SNAPSHOT_RETENTION_DAYS = int(os.getenv("SNAPSHOT_RETENTION_DAYS", "30"))
 BACKUP_DIR = Path(os.getenv("DB_PATH", "fundscan.db")).parent / "backups"
 OWNER_EMAIL = "bilguun@fundscan.uk"
 
+# run_db_prune's "once per day" marker. The _last_*_date module globals above
+# are in-memory only and reset to "" on every process restart -- on a day
+# with many deploys, that made both agents re-fire on the first fetch cycle
+# after every single restart instead of once per real day. run_db_backup
+# self-corrects for free (its output filename is already date-stamped, so a
+# same-day rerun just re-copies over the same file rather than piling up
+# duplicates) -- but repeated reruns still meant wasted I/O on every restart,
+# and combined with the WAL bloat below, contributed to the volume filling
+# up on 2026-08-18. run_db_prune has no natural on-disk artifact to check,
+# so it gets an explicit persisted marker file.
+_PRUNE_MARKER = Path(os.getenv("DB_PATH", "fundscan.db")).parent / ".last_prune_date"
+
 
 def run_db_backup() -> None:
     """Agent: copies fundscan.db to backups/ once per day."""
@@ -39,6 +51,12 @@ def run_db_backup() -> None:
 
     BACKUP_DIR.mkdir(exist_ok=True)
     backup_path = BACKUP_DIR / f"fundscan_{today}.db"
+    if backup_path.exists():
+        # Already backed up today by an earlier process on this same
+        # calendar day (the in-memory guard above doesn't survive restarts,
+        # but this dated file on the persistent volume does).
+        _last_backup_date = today
+        return
     shutil.copy2(db_path, backup_path)
 
     # Keep only last 7 backups
@@ -58,6 +76,11 @@ def run_db_prune() -> None:
     today = now.strftime("%Y-%m-%d")
     if _last_prune_date == today:
         return
+    if _PRUNE_MARKER.exists() and _PRUNE_MARKER.read_text().strip() == today:
+        # Already pruned today by an earlier process on this same calendar
+        # day -- see _PRUNE_MARKER comment above.
+        _last_prune_date = today
+        return
 
     from .db import get_conn
     cutoff = f"-{SNAPSHOT_RETENTION_DAYS} days"
@@ -69,6 +92,7 @@ def run_db_prune() -> None:
         deleted = result.rowcount
 
     _last_prune_date = today
+    _PRUNE_MARKER.write_text(today)
     log.info("DB prune: deleted %d snapshots older than %d days", deleted, SNAPSHOT_RETENTION_DAYS)
 
 

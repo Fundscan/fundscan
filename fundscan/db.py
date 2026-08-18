@@ -113,6 +113,19 @@ def init_db(path: Optional[Path] = None) -> None:
     log.info("DB initialised at %s", DB_PATH)
 
 
+def checkpoint_wal() -> None:
+    """
+    Force a WAL checkpoint, truncating the -wal file back into the main DB.
+    WAL mode's automatic checkpoint only fires when the *last* connection to
+    the database closes -- under near-continuous concurrent access (the
+    fetch loop's inserts overlapping with dashboard HTMX polling), that
+    rarely happens, so -wal can grow unbounded without an explicit,
+    periodic checkpoint. Called once per fetch cycle from the fetch loop.
+    """
+    with get_conn() as conn:
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+
+
 def insert_snapshots(rows: list[dict]) -> None:
     with get_conn() as conn:
         conn.executemany(

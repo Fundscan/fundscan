@@ -26,7 +26,7 @@ from . import sizing
 from . import pairing
 from . import signals
 from .backtest import realized_accuracy
-from .db import init_db, insert_snapshots, query_delayed, query_history, query_latest, query_sparklines, get_watchlist, toggle_watchlist, get_conn
+from .db import init_db, insert_snapshots, query_delayed, query_history, query_latest, query_sparklines, get_watchlist, toggle_watchlist, get_conn, checkpoint_wal
 from .scanner import scan
 from .alerts import (check_and_send_alerts, check_anomalies, send_daily_digest,
                      check_multi_exchange, check_watchlist_drops,
@@ -69,6 +69,12 @@ async def _fetch_loop():
             _state["last_fetch_at"] = datetime.now(timezone.utc).isoformat()
             if rows:
                 await asyncio.to_thread(insert_snapshots, rows)
+                # WAL only auto-checkpoints when the last connection closes,
+                # which rarely happens under continuous writes + concurrent
+                # dashboard reads -- explicit checkpoint every cycle keeps
+                # -wal bounded instead of growing unboundedly (this is what
+                # filled the persistent volume on 2026-08-18).
+                await asyncio.to_thread(checkpoint_wal)
                 await asyncio.to_thread(check_and_send_alerts, rows)
                 await asyncio.to_thread(check_anomalies, rows)
                 await asyncio.to_thread(check_multi_exchange, rows)
