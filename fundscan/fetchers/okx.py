@@ -30,8 +30,41 @@ def _top_symbols_by_volume(client: httpx.Client) -> dict[str, float]:
     return {t["instId"]: float(t.get("volCcy24h") or 0) for t in tickers[:TOP_N]}
 
 
-def _order_book(client: httpx.Client, inst_id: str) -> dict:
-    """Fetch order book depth for one instrument. Returns {bids, asks} as [[price, qty], ...] floats."""
+def _contract_values(client: httpx.Client) -> dict[str, float]:
+    """
+    Map instId -> ctVal (coins per contract) for all USDT swaps.
+
+    OKX order-book sizes are in CONTRACTS, not coins. For most majors
+    ctVal is small (BTC: 0.01), but for sub-cent tokens it's huge
+    (SHIB: 1,000,000), so treating contract counts as coin counts
+    understates book depth by up to a millionfold — which is what made
+    sizing.py's overshoot penalty explode into -900,000% net APYs.
+    """
+    r = client.get(
+        f"{BASE}/api/v5/public/instruments",
+        params={"instType": "SWAP"},
+        timeout=TIMEOUT,
+    )
+    r.raise_for_status()
+    data = r.json()
+    if data.get("code") != "0":
+        raise ValueError(f"OKX API error: {data.get('msg')}")
+    return {
+        inst["instId"]: float(inst["ctVal"])
+        for inst in data["data"]
+        if inst.get("ctVal")
+    }
+
+
+def _order_book(client: httpx.Client, inst_id: str, ct_val: float) -> dict:
+    """
+    Fetch order book depth for one instrument. Returns {bids, asks} as
+    [[price, qty], ...] floats with qty converted from contracts to coins.
+    An unknown contract size returns an empty book: sizing.py treats that
+    as "depth unknown" rather than mis-scaled garbage.
+    """
+    if ct_val <= 0:
+        return {"bids": [], "asks": []}
     r = client.get(
         f"{BASE}/api/v5/market/books",
         params={"instId": inst_id, "sz": 50},
@@ -43,12 +76,12 @@ def _order_book(client: httpx.Client, inst_id: str) -> dict:
         return {"bids": [], "asks": []}
     book = data["data"][0]
     return {
-        "bids": [[float(p), float(q)] for p, q, *_ in book.get("bids", [])],
-        "asks": [[float(p), float(q)] for p, q, *_ in book.get("asks", [])],
+        "bids": [[float(p), float(q) * ct_val] for p, q, *_ in book.get("bids", [])],
+        "asks": [[float(p), float(q) * ct_val] for p, q, *_ in book.get("asks", [])],
     }
 
 
-def _current_funding(client: httpx.Client, inst_id: str, volume: float) -> Optional[dict]:
+def _current_funding(client: httpx.Client, inst_id: str, volume: float, ct_val: float) -> Optional[dict]:
     """Fetch current funding rate + order book for one instrument."""
     r = client.get(
         f"{BASE}/api/v5/public/funding-rate",
@@ -63,7 +96,7 @@ def _current_funding(client: httpx.Client, inst_id: str, volume: float) -> Optio
     # OKX uses instId like BTC-USDT-SWAP; normalise to BTCUSDT for consistency
     symbol = inst_id.replace("-USDT-SWAP", "USDT")
     try:
-        book = _order_book(client, inst_id)
+        book = _order_book(client, inst_id, ct_val)
     except Exception as e:
         log.warning("OKX: order book failed for %s: %s", inst_id, e)
         book = {"bids": [], "asks": []}
@@ -86,10 +119,18 @@ def fetch() -> list[dict]:
     try:
         with httpx.Client() as client:
             volumes = _top_symbols_by_volume(client)
+            try:
+                ct_vals = _contract_values(client)
+            except Exception as e:
+                # Without contract sizes the book depth would be garbage
+                # (contracts misread as coins); drop books rather than
+                # feed sizing.py numbers that are wrong by up to 10^6.
+                log.warning("OKX: instrument specs failed (%s); omitting order books", e)
+                ct_vals = {}
             rows = []
             for inst_id, volume in volumes.items():
                 try:
-                    row = _current_funding(client, inst_id, volume)
+                    row = _current_funding(client, inst_id, volume, ct_vals.get(inst_id, 0))
                     if row:
                         rows.append(row)
                 except Exception as e:

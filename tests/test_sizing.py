@@ -249,3 +249,39 @@ def test_illiquid_outlier_still_shown_not_deleted():
 def test_position_size_presets():
     assert POSITION_SIZES == [250, 1000, 5000, 25000]
     assert DEFAULT_POSITION_SIZE in POSITION_SIZES
+
+
+# ---------------------------------------------------------------------------
+# Regression: mis-scaled depth must floor, never explode
+# ---------------------------------------------------------------------------
+
+# A sub-cent token book whose sizes are wrong by 10^6 (contracts misread
+# as coins, as OKX books were before ctVal conversion): visible depth is
+# ~$0.63 per side against a $1,000 position. This exact shape produced
+# -944,228% net APY rows (PEPE/SHIB/SATS) on the live board.
+MISSCALED_SUBCENT_BOOK = {
+    "bids": [[0.0000126, 25_000], [0.0000125, 25_000]],
+    "asks": [[0.0000127, 25_000], [0.0000128, 25_000]],
+}
+
+
+def test_misscaled_book_floors_net_apy_instead_of_exploding():
+    rate_8h = 0.0001
+    row = {"exchange": "okx", "symbol": "SHIBUSDT", "rate_8h": rate_8h,
+           "order_book": MISSCALED_SUBCENT_BOOK, "volume_24h_usd": 50_000_000}
+    out = size_opportunity(row, DEFAULT_POSITION_SIZE)
+    # The raw slippage is astronomical (position is ~1,500x visible depth),
+    # but the displayed net yield floors at -100%/yr instead of rendering
+    # as a -900,000% row.
+    assert out["slippage_pct"] > 100
+    assert out["net_apy_at_size"] == -1.0
+
+
+def test_net_apy_floor_does_not_touch_normal_rows():
+    rate_8h = 0.0001
+    row = {"exchange": "bybit", "symbol": "BTCUSDT", "rate_8h": rate_8h,
+           "order_book": DEEP_BOOK, "volume_24h_usd": 1_000_000_000}
+    out = size_opportunity(row, DEFAULT_POSITION_SIZE)
+    assert out["net_apy_at_size"] > 0
+    assert out["net_apy_at_size"] == pytest.approx(
+        fm.net_apy_at_size(rate_8h, out["slippage_pct"], "bybit"))

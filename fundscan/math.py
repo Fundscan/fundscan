@@ -17,10 +17,10 @@ understating every net APY and inflating every breakeven-cycles figure.
 
 CME is intentionally absent from PER_VENUE_FEE_PER_LEG: it's a dated-future
 cash-and-carry basis trade, not a spot+perp funding-arb round trip, so this
-per-leg taker model doesn't describe its economics at all (CME charges a
-flat commission per contract, not a % of notional). CME rows fall back to
-FEE_PER_LEG as a conservative placeholder -- see fetchers/traditional.py
-for that limitation.
+per-leg taker model doesn't describe its economics at all. CME rows attach
+their own all-in `round_trip_cost` (execution + spot-leg ETF expense ratio,
+see fetchers/traditional.py), which overrides this model entirely via the
+round_trip_cost parameter on net_apy/breakeven_cycles/is_profitable.
 """
 from typing import Optional
 
@@ -74,7 +74,25 @@ def round_trip_fee_cost_two_venue(exchange_a: str, exchange_b: str) -> float:
     return fee_per_leg(exchange_a) * 2 + fee_per_leg(exchange_b) * 2
 
 
-def net_apy(rate_8h: float, exchange: Optional[str] = None) -> float:
+def total_round_trip_cost(
+    exchange: Optional[str] = None, round_trip_cost: Optional[float] = None
+) -> float:
+    """
+    Total cost deducted from gross annual yield. An explicit
+    `round_trip_cost` (attached to a row by its fetcher, e.g. CME's real
+    commission+spread+ETF-expense economics in fetchers/traditional.py)
+    wins outright; otherwise the venue's taker-fee model + flat slippage.
+    """
+    if round_trip_cost is not None:
+        return round_trip_cost
+    return round_trip_fee_cost(exchange) + SLIPPAGE
+
+
+def net_apy(
+    rate_8h: float,
+    exchange: Optional[str] = None,
+    round_trip_cost: Optional[float] = None,
+) -> float:
     """
     Fee-adjusted net APY.
     Subtract round-trip cost (amortised over the holding period is wrong —
@@ -82,27 +100,33 @@ def net_apy(rate_8h: float, exchange: Optional[str] = None) -> float:
     yield directly as a one-time cost expressed in annual terms).
     Net APY = gross annual - total round-trip cost.
     Negative means the opportunity costs more in fees than it earns.
-    `exchange` selects the real per-venue fee; omitted/unknown falls back
-    to the flat conservative default.
+    `exchange` selects the real per-venue fee; an explicit
+    `round_trip_cost` (from the row's fetcher) overrides it entirely.
     """
-    total_cost = round_trip_fee_cost(exchange) + SLIPPAGE
-    return annualised_gross(rate_8h) - total_cost
+    return annualised_gross(rate_8h) - total_round_trip_cost(exchange, round_trip_cost)
 
 
-def breakeven_cycles(rate_8h: float, exchange: Optional[str] = None) -> Optional[float]:
+def breakeven_cycles(
+    rate_8h: float,
+    exchange: Optional[str] = None,
+    round_trip_cost: Optional[float] = None,
+) -> Optional[float]:
     """
     Number of 8h funding payments needed to recover round-trip fees.
     Returns None if rate is zero or negative (never breaks even).
     """
     if rate_8h <= 0:
         return None
-    total_cost = round_trip_fee_cost(exchange) + SLIPPAGE
-    return total_cost / rate_8h
+    return total_round_trip_cost(exchange, round_trip_cost) / rate_8h
 
 
-def is_profitable(rate_8h: float, exchange: Optional[str] = None) -> bool:
+def is_profitable(
+    rate_8h: float,
+    exchange: Optional[str] = None,
+    round_trip_cost: Optional[float] = None,
+) -> bool:
     """True if net APY is positive after fees."""
-    return net_apy(rate_8h, exchange) > 0
+    return net_apy(rate_8h, exchange, round_trip_cost) > 0
 
 
 def net_apy_at_size(rate_8h: float, slippage_cost: float, exchange: Optional[str] = None) -> float:

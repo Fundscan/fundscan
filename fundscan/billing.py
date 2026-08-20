@@ -18,13 +18,15 @@ from datetime import datetime, timezone
 
 import stripe
 
-from .auth import set_user_tier
+from .auth import COMP_PRO_EMAILS, set_user_tier
 from .db import get_conn
 from .alerts import notify_new_signup, notify_churn
 
 log = logging.getLogger(__name__)
 
-STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY") or os.getenv("SECRET_KEY", "")
+# No fallback to SECRET_KEY: that's the session-signing secret, and using
+# it here would silently send it to Stripe's API as a (failing) API key.
+STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "")
 STRIPE_PRICE_ID = os.getenv("STRIPE_PRICE_ID", "")
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")
 
@@ -124,7 +126,12 @@ def handle_webhook(event: stripe.Event) -> None:
                 stripe.api_key = STRIPE_SECRET_KEY
                 customer = stripe.Customer.retrieve(customer_id)
                 email = customer.get("email")
-                if email:
+                if email in COMP_PRO_EMAILS:
+                    # Comped accounts keep Pro regardless of Stripe state --
+                    # downgrading here would fire a false churn alert and
+                    # flash the account free until the next self-heal.
+                    log.info("subscription.deleted for comped %s ignored", email)
+                elif email:
                     set_user_tier(email, "free")
                     notify_churn(email)
                     log.info("subscription.deleted → %s tier=free", email)

@@ -84,6 +84,10 @@ def _side_slippage_pct(levels: list[list[float]], notional: float) -> float:
     overshoot = max(0.0, notional / total_depth - 1.0)
     penalty = unfilled_fraction * overshoot
 
+    # Deliberately unbounded: the penalty scales with how many multiples of
+    # visible depth the position is, which is what lets an arbitrarily high
+    # gross APY on a thin book collapse to ~zero instead of topping the
+    # board. The DISPLAY floor lives in size_opportunity(), not here.
     return filled_slippage * (1 - unfilled_fraction) + penalty
 
 
@@ -135,6 +139,11 @@ def size_opportunity(row: dict, position_size: float) -> dict:
     if asks and bids:
         slippage_pct = entry_exit_slippage_pct(book, position_size)
         net_at_size = fm.net_apy_at_size(row["rate_8h"], slippage_pct, row["exchange"])
+        # Floor the headline at -100%/yr. Below that the number carries no
+        # information ("costs eat all your capital") and any depth-data
+        # glitch would otherwise render as a -900,000% row on the public
+        # board -- everything at the floor sinks to the bottom together.
+        net_at_size = max(net_at_size, -1.0)
     else:
         slippage_pct = None
         net_at_size = None

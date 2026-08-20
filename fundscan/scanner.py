@@ -48,13 +48,17 @@ def scan() -> list[dict]:
     for row in raw:
         rate = row["rate_8h"]
         exchange = row["exchange"]
-        be = fm.breakeven_cycles(rate, exchange)
+        # A fetcher may attach its own all-in round_trip_cost (e.g. CME's
+        # commission+spread+ETF-expense economics); it overrides the
+        # per-venue taker-fee model.
+        cost = row.get("round_trip_cost")
+        be = fm.breakeven_cycles(rate, exchange, cost)
         enriched.append({
             **row,
             "gross_apy": fm.annualised_gross(rate),
-            "net_apy": fm.net_apy(rate, exchange),
+            "net_apy": fm.net_apy(rate, exchange, cost),
             "breakeven_cycles": round(be, 1) if be is not None else None,
-            "is_profitable": fm.is_profitable(rate, exchange),
+            "is_profitable": fm.is_profitable(rate, exchange, cost),
             "fetched_at": fetched_at,
         })
 

@@ -61,7 +61,21 @@ _state: dict = {
 }
 
 
+async def _run_job(name: str, fn, *args) -> None:
+    """Run one background job; a failure is logged, never propagated."""
+    try:
+        await asyncio.to_thread(fn, *args)
+    except Exception as e:
+        log.error("Background job %s failed: %s", name, e)
+
+
 async def _fetch_loop():
+    """
+    Core loop: scan rates, persist, fire rate-driven alerts. Nothing else —
+    one slow or crashing side job must never delay the next rate refresh
+    or (as before, when all jobs shared this loop's single try block)
+    silently skip the alert checks that follow it in sequence.
+    """
     while True:
         try:
             rows = await asyncio.to_thread(scan)
@@ -75,18 +89,12 @@ async def _fetch_loop():
                 # -wal bounded instead of growing unboundedly (this is what
                 # filled the persistent volume on 2026-08-18).
                 await asyncio.to_thread(checkpoint_wal)
-                await asyncio.to_thread(check_and_send_alerts, rows)
-                await asyncio.to_thread(check_anomalies, rows)
-                await asyncio.to_thread(check_multi_exchange, rows)
-                await asyncio.to_thread(check_watchlist_drops, rows)
-                await asyncio.to_thread(send_daily_digest, rows)
-                await asyncio.to_thread(run_onboarding)
-                await asyncio.to_thread(run_weekly_report, rows)
-                await asyncio.to_thread(run_db_backup)
-                await asyncio.to_thread(run_db_prune)
-                await asyncio.to_thread(run_seo_check)
-                await asyncio.to_thread(run_competitor_monitor)
-                await asyncio.to_thread(run_reddit_scout)
+                # Rate-driven alerts stay on the fetch cadence, but each in
+                # its own error boundary so one failure can't starve the rest.
+                await _run_job("threshold_alerts", check_and_send_alerts, rows)
+                await _run_job("anomaly_alerts", check_anomalies, rows)
+                await _run_job("multi_exchange_alerts", check_multi_exchange, rows)
+                await _run_job("watchlist_drop_alerts", check_watchlist_drops, rows)
             log.info("Fetched %d rows", len(rows))
         except Exception as e:
             _state["fetch_errors"] += 1
@@ -94,13 +102,40 @@ async def _fetch_loop():
         await asyncio.sleep(FETCH_INTERVAL)
 
 
+MAINTENANCE_INTERVAL = int(os.getenv("MAINTENANCE_INTERVAL", str(10 * 60)))  # seconds
+
+
+async def _maintenance_loop():
+    """
+    Slow housekeeping decoupled from the rate cadence: digests, reports,
+    backups, pruning, SEO/competitor/Reddit monitors. All of these are
+    internally date/time-guarded (daily digest sends once per day, etc.),
+    so running the loop every 10 minutes instead of every 60 seconds
+    changes only their worst-case lateness, not how often they act.
+    """
+    while True:
+        rows = _state["results"]
+        if rows:
+            await _run_job("daily_digest", send_daily_digest, rows)
+            await _run_job("onboarding", run_onboarding)
+            await _run_job("weekly_report", run_weekly_report, rows)
+        await _run_job("db_backup", run_db_backup)
+        await _run_job("db_prune", run_db_prune)
+        await _run_job("seo_check", run_seo_check)
+        await _run_job("competitor_monitor", run_competitor_monitor)
+        await _run_job("reddit_scout", run_reddit_scout)
+        await asyncio.sleep(MAINTENANCE_INTERVAL)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     db_path = Path(os.getenv("DB_PATH", "fundscan.db"))
     init_db(db_path)
-    task = asyncio.create_task(_fetch_loop())
+    fetch_task = asyncio.create_task(_fetch_loop())
+    maintenance_task = asyncio.create_task(_maintenance_loop())
     yield
-    task.cancel()
+    fetch_task.cancel()
+    maintenance_task.cancel()
 
 
 app = FastAPI(title="FundScan", version="0.1.0", lifespan=lifespan)

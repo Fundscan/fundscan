@@ -197,8 +197,8 @@ footer a{color:var(--gold);text-decoration:none}
     Net APY = gross annualised funding rate − real per-venue round-trip execution cost
     ({{ legs }} legs at each exchange's own published taker rate + {{ "%.2f"|format(slippage_pct) }}%
     slippage provision, {{ "%.2f"|format(min_round_trip_pct) }}–{{ "%.2f"|format(max_round_trip_pct) }}%
-    total depending on venue). CME uses a {{ "%.2f"|format(default_round_trip_pct) }}% placeholder,
-    since it charges a per-contract commission rather than a %-of-notional taker fee. Breakeven
+    total depending on venue). CME rows (index basis + FX carry) instead deduct that trade's real
+    costs: execution spreads/commissions plus the spot leg's ETF expense ratio where one applies. Breakeven
     cycles is the number of 8-hour funding settlements required to recover that cost. Figures are
     estimates derived from public exchange data and a standardised cost model — not a projection
     of future returns.

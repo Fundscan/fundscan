@@ -323,9 +323,9 @@ tr.chart-row td{padding:.5rem 1rem 1.25rem;background:rgba(15,27,48,.4);border-b
       Net APY at size = gross annual yield − real per-venue round-trip fees ({{ legs }} legs at
       each exchange's own published taker rate, {{ "%.2f"|format(min_round_trip_pct) }}–{{ "%.2f"|format(max_round_trip_pct) }}%
       total depending on venue) − estimated entry+exit slippage for your position size, walked
-      against live order book depth. CME rows use a {{ "%.2f"|format(default_round_trip_pct) }}%
-      placeholder — CME charges a per-contract commission, not a %-of-notional taker fee, so this
-      model doesn't describe it and its Net APY at size shows n/a instead.
+      against live order book depth. CME rows (index basis + FX carry) deduct their own trade's
+      real costs instead — execution spreads/commissions plus the spot leg's ETF expense ratio
+      where one applies — and show n/a for Net APY at size (no public CME depth feed).
       Liquidity badge flags position size as % of 24h volume: <b style="color:var(--green)">green</b> ≤0.25%,
       <b style="color:var(--gold)">amber</b> ≤1%, <b style="color:var(--red)">red</b> above 1%.
       Click any row for 7-day rate history. Rates refresh every 60 s.
@@ -508,6 +508,7 @@ function setBoard(btn) {
 
 function filterRows() {
   const q = document.getElementById('search').value.toLowerCase();
+  let visible = 0;
   document.querySelectorAll('#rates-body tr.data-row').forEach(tr => {
     if (tr.classList.contains('locked-row')) return;
     const sym = (tr.dataset.symbol || '').toLowerCase();
@@ -518,8 +519,29 @@ function filterRows() {
     const chartRow = document.getElementById(`chart-${tr.dataset.symbol}-${tr.dataset.exchange}`);
     const hide = !(matchQ && matchEx);
     tr.style.display = hide ? 'none' : '';
+    if (!hide) visible++;
     if (chartRow) chartRow.style.display = 'none'; // collapse on filter
   });
+
+  // Empty state: a silent blank table reads as "the site is broken", not
+  // "no matches". Say which — and that untracked ≠ nonexistent.
+  let emptyRow = document.getElementById('filter-empty-row');
+  if (visible === 0 && _filterActive()) {
+    if (!emptyRow) {
+      emptyRow = document.createElement('tr');
+      emptyRow.id = 'filter-empty-row';
+      document.getElementById('rates-body').appendChild(emptyRow);
+    }
+    const safeQ = q.toUpperCase().replace(/[^A-Z0-9\-\/]/g, '');
+    emptyRow.innerHTML =
+      '<td colspan="8" style="text-align:center;color:var(--mist);' +
+      'font-family:var(--mono);font-size:12px;letter-spacing:.06em;padding:2rem 1rem">' +
+      'No tracked instruments match' + (safeQ ? ` “${safeQ}”` : ' this filter') +
+      ' — the scanner covers the top pairs by volume on each venue, so an unlisted symbol isn’t tracked (yet), not necessarily nonexistent.</td>';
+    emptyRow.style.display = '';
+  } else if (emptyRow) {
+    emptyRow.style.display = 'none';
+  }
   updateStatsCards();
 }
 
