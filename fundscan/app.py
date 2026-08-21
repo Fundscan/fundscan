@@ -188,6 +188,34 @@ def _fee_model_context() -> dict:
     }
 
 
+@app.get("/how-it-works", response_class=HTMLResponse)
+def how_it_works(request: Request):
+    """
+    Public explainer: the find→verify→hedge→collect→watch→exit workflow.
+    SEO-indexable and linkable from social. The worked example is the
+    live #1 profitable LIQUID-ish pair, server-rendered; omitted cleanly
+    if the scanner hasn't produced data yet.
+    """
+    example = None
+    for r in _state["results"]:
+        if r["is_profitable"] and r.get("breakeven_cycles") is not None:
+            example = {
+                "symbol": r["symbol"],
+                "exchange": r["exchange"],
+                "rate_8h": r["rate_8h"],
+                "net_apy": r["net_apy"],
+                "breakeven_cycles": r["breakeven_cycles"],
+                "per_cycle": r["rate_8h"] * 1000,
+                "per_day": r["rate_8h"] * 1000 * 3,
+            }
+            break
+    return templates.TemplateResponse(
+        request,
+        "how_it_works.html",
+        {"site_url": SITE_URL, "example": example},
+    )
+
+
 @app.get("/rates", response_class=HTMLResponse)
 def public_rates(request: Request):
     """
@@ -221,6 +249,7 @@ def sitemap():
     urls = [
         (f"{SITE_URL}/", "daily", "1.0"),
         (f"{SITE_URL}/rates", "hourly", "0.9"),
+        (f"{SITE_URL}/how-it-works", "weekly", "0.8"),
     ]
     body = (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
@@ -241,6 +270,7 @@ def robots_txt():
         "User-agent: *\n"
         "Allow: /\n"
         "Allow: /rates\n"
+        "Allow: /how-it-works\n"
         "Disallow: /app\n"
         "Disallow: /account\n"
         "Disallow: /admin\n"

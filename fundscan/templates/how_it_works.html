@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>How Funding Rate Arbitrage Works — FundScan</title>
+<meta name="description" content="What a trader actually does with a funding rate: find, verify, hedge, collect, exit. The complete workflow behind delta-neutral funding yield, explained with live numbers.">
+<link rel="canonical" href="{{ site_url }}/how-it-works">
+
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="FundScan">
+<meta property="og:title" content="How Funding Rate Arbitrage Works">
+<meta property="og:description" content="Find, verify, hedge, collect, exit — the complete funding-yield workflow, explained with live numbers.">
+<meta property="og:url" content="{{ site_url }}/how-it-works">
+<meta name="twitter:card" content="summary">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,500;0,8..60,600;1,8..60,400&family=Instrument+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --navy:#0A1424; --navy-2:#0F1B30; --navy-3:#16233C;
+  --ivory:#EEF1F6; --soft:#A7B2C4; --mist:#67748A;
+  --hairline:rgba(167,178,196,.13); --hairline-2:rgba(167,178,196,.24);
+  --gold:#C9A551; --gold-dim:#8A7238; --green:#3FBE8E; --red:#D96A6A;
+  --serif:'Source Serif 4',Georgia,serif;
+  --sans:'Instrument Sans',system-ui,sans-serif;
+  --mono:'IBM Plex Mono',ui-monospace,monospace;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--navy);color:var(--ivory);font-family:var(--sans);font-size:16px;
+     line-height:1.6;-webkit-font-smoothing:antialiased;overflow-x:hidden}
+a{color:inherit}
+::selection{background:var(--gold);color:var(--navy)}
+
+.ambient{position:fixed;inset:0;z-index:-2;pointer-events:none;
+  background:radial-gradient(900px 500px at 15% -5%,rgba(201,165,81,.055),transparent 60%),
+    radial-gradient(1100px 600px at 90% 15%,rgba(63,190,142,.04),transparent 60%)}
+.grid-bg{position:fixed;inset:0;z-index:-1;pointer-events:none;opacity:.28;
+  background-image:linear-gradient(rgba(167,178,196,.045) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(167,178,196,.045) 1px,transparent 1px);
+  background-size:56px 56px;
+  mask-image:radial-gradient(1200px 800px at 50% 0%,black 30%,transparent 85%)}
+
+nav{position:sticky;top:0;z-index:50;display:flex;align-items:center;justify-content:space-between;
+    padding:16px 32px;background:rgba(10,20,36,.82);backdrop-filter:blur(18px);
+    border-bottom:1px solid var(--hairline);gap:1rem;flex-wrap:wrap}
+.logo{display:flex;align-items:center;gap:10px;text-decoration:none}
+.logo-mark{width:28px;height:28px;flex-shrink:0}
+.logo-word{font-family:var(--serif);font-weight:600;font-size:19px;letter-spacing:-.01em}
+.logo-word i{font-style:normal;color:var(--gold)}
+.btn{display:inline-block;font-family:var(--sans);font-weight:600;font-size:14px;text-decoration:none;
+     padding:10px 22px;border-radius:4px;background:var(--gold);color:#221A08;transition:background .2s}
+.btn:hover{background:#D9B65F}
+
+main{max-width:880px;margin:0 auto;padding:56px 32px 40px}
+.kicker{font-family:var(--mono);font-size:12px;letter-spacing:.2em;text-transform:uppercase;color:var(--gold);margin-bottom:20px}
+h1{font-family:var(--serif);font-size:clamp(30px,4.4vw,46px);line-height:1.15;letter-spacing:-.01em;font-weight:500;margin-bottom:20px}
+.lede{color:var(--soft);font-size:17px;line-height:1.75;margin-bottom:8px}
+
+.live-example{margin:36px 0;padding:26px 28px;border:1px solid rgba(63,190,142,.3);border-radius:8px;
+  background:linear-gradient(160deg,rgba(63,190,142,.06),transparent)}
+.live-example .tag{font-family:var(--mono);font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--green);margin-bottom:10px}
+.live-example .big{font-family:var(--mono);font-size:15px;color:var(--soft);line-height:2}
+.live-example .big b{color:var(--ivory);font-weight:600}
+.live-example .big .g{color:var(--green);font-weight:600}
+
+.step{display:flex;gap:22px;margin:34px 0;align-items:flex-start}
+.step-n{flex-shrink:0;width:44px;height:44px;border:1px solid rgba(201,165,81,.4);border-radius:50%;
+  display:flex;align-items:center;justify-content:center;font-family:var(--serif);font-size:20px;color:var(--gold)}
+.step h2{font-family:var(--serif);font-size:21px;font-weight:600;margin-bottom:8px}
+.step p{color:var(--soft);font-size:15.5px;line-height:1.75}
+.step p b{color:var(--ivory);font-weight:600}
+.step p code{font-family:var(--mono);font-size:13.5px;color:var(--green)}
+
+.honesty{margin:48px 0;padding:28px;border:1px solid rgba(217,106,106,.3);border-radius:8px;
+  background:linear-gradient(160deg,rgba(217,106,106,.05),transparent)}
+.honesty h2{font-family:var(--serif);font-size:22px;font-weight:600;margin-bottom:14px}
+.honesty li{color:var(--soft);font-size:15px;line-height:1.8;margin:10px 0 10px 20px}
+.honesty li b{color:var(--ivory)}
+
+.cta-band{margin:56px 0 20px;padding:36px 32px;border:1px solid rgba(201,165,81,.3);border-radius:8px;
+  background:linear-gradient(160deg,rgba(201,165,81,.07),transparent);text-align:center}
+.cta-band h2{font-family:var(--serif);font-size:24px;font-weight:600;margin-bottom:10px}
+.cta-band p{color:var(--soft);margin-bottom:22px}
+
+.fee-note{font-family:var(--mono);font-size:12px;color:var(--mist);line-height:1.85;margin-top:28px;letter-spacing:.02em}
+
+footer{border-top:1px solid var(--hairline);padding:32px;color:var(--mist);font-size:12.5px;line-height:1.75;max-width:880px;margin:0 auto}
+footer a{color:var(--gold);text-decoration:none}
+
+@media(max-width:700px){
+  nav,main,footer{padding-left:18px;padding-right:18px}
+  .step{gap:14px}
+}
+</style>
+</head>
+<body>
+<div class="ambient" aria-hidden="true"></div>
+<div class="grid-bg" aria-hidden="true"></div>
+
+<nav>
+  <a class="logo" href="/" aria-label="FundScan home">
+    <svg class="logo-mark" viewBox="0 0 34 34" aria-hidden="true">
+      <circle cx="17" cy="17" r="15.5" fill="none" stroke="#C9A551" stroke-width="1.6"/>
+      <path d="M10 21 L15 16 L19 19 L24 12" fill="none" stroke="#3FBE8E" stroke-width="2.2" stroke-linecap="round"/>
+      <circle cx="24" cy="12" r="2" fill="#3FBE8E"/>
+    </svg>
+    <span class="logo-word">FundScan<i>.</i></span>
+  </a>
+  <a href="/rates" class="btn">See the live board</a>
+</nav>
+
+<main>
+  <div class="kicker">The workflow</div>
+  <h1>What do you actually <em>do</em> with a funding rate?</h1>
+  <p class="lede">
+    Exchanges pay a recurring fee to one side of every perpetual futures market, to keep the
+    perp's price pegged to spot. Collecting that fee — without betting on price at all — is
+    called funding rate arbitrage. Here is the entire workflow, start to finish.
+  </p>
+
+  {% if example %}
+  <div class="live-example">
+    <div class="tag">● Live example — top of the board right now</div>
+    <div class="big">
+      <b>{{ example.symbol }}</b> on <b>{{ example.exchange|upper }}</b> is paying
+      <span class="g">{{ "%.4f"|format(example.rate_8h * 100) }}%</span> per funding cycle —
+      <span class="g">{{ "%.1f"|format(example.net_apy * 100) }}% a year net of fees</span>.<br>
+      On a £1,000 hedged position: <b>£{{ "%.2f"|format(example.per_cycle) }} per cycle</b>,
+      about <b>£{{ "%.2f"|format(example.per_day) }} a day</b> —
+      entry and exit costs recovered after {{ "%.1f"|format(example.breakeven_cycles) }} cycles.
+    </div>
+  </div>
+  {% endif %}
+
+  <div class="step">
+    <div class="step-n">1</div>
+    <div>
+      <h2>Find</h2>
+      <p>The board ranks every tracked pair across six venues by <b>net</b> annualised yield —
+      after each exchange's real taker fees and slippage walked against live order-book depth
+      at your position size. The gross number everyone else publishes is the starting point,
+      not the answer.</p>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-n">2</div>
+    <div>
+      <h2>Verify</h2>
+      <p>A big rate that appeared an hour ago is a very different bet from one that has held
+      for a week. Click any row for its <b>7-day history</b>, check the <b>breakeven cycles</b>
+      figure (how many funding payments repay your entry and exit costs), and confirm the
+      <b>liquidity badge</b> — the largest advertised rates often live in books too thin to
+      actually fill. The Top Performer chart shows what pairs <b>actually paid</b>, averaged,
+      not what they advertised.</p>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-n">3</div>
+    <div>
+      <h2>Hedge</h2>
+      <p>On the exchange (FundScan never touches your funds), open the two legs at the same
+      time: <b>buy the asset in the spot market, and short the same value in the perpetual</b>.
+      If the price doubles or halves, one leg's gain cancels the other's loss. Price no longer
+      matters — you hold a market-neutral position.</p>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-n">4</div>
+    <div>
+      <h2>Collect</h2>
+      <p>Every funding cycle — hourly on some venues, every 8 hours on others — the exchange
+      transfers the funding payment from longs to shorts. Your short leg collects it. The
+      first few payments repay your costs (that's the breakeven figure); everything after is
+      yield on a position that cannot lose to price moves.</p>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-n">5</div>
+    <div>
+      <h2>Watch</h2>
+      <p>Rates change constantly — that's the whole game. Star a pair to watch it, and set a
+      <b>Telegram alert</b> so FundScan pings you when your threshold is crossed or a held
+      position's rate collapses. This replaces keeping six exchange tabs open and checking
+      by hand.</p>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-n">6</div>
+    <div>
+      <h2>Exit</h2>
+      <p>The yield belongs to whoever leaves when the rate compresses — not whoever holds
+      hoping it comes back. When funding no longer covers its costs (or flips negative, so
+      shorts <b>pay</b> instead of earn), close both legs: sell the spot, buy back the perp.
+      Then the board shows you the next one.</p>
+    </div>
+  </div>
+
+  <div class="honesty">
+    <h2>What can go wrong — honestly</h2>
+    <ul>
+      <li><b>Rates flip.</b> The same pair can swing from strongly positive to strongly negative
+      funding within weeks. While it's negative, a held position pays instead of earns. The
+      exit discipline in step 6 is where the yield is actually made or lost.</li>
+      <li><b>The biggest numbers are the riskiest.</b> Triple-digit APYs cluster in small,
+      meme-heavy pairs precisely because the hedge is hardest to keep alive there — delistings
+      and vanishing liquidity can break one leg of the position.</li>
+      <li><b>Size changes everything.</b> A rate that clears fees at £1,000 can be unfillable at
+      £25,000. That's why the board re-ranks by net yield at <em>your</em> position size.</li>
+      <li><b>Access depends on where you live.</b> Some jurisdictions restrict retail access to
+      crypto derivatives — check what applies to you before planning a trade.</li>
+    </ul>
+  </div>
+
+  <div class="cta-band">
+    <h2>See what's paying right now</h2>
+    <p>Every rate on six venues, ranked by what you'd actually keep. Free tier, no exchange API keys, no custody.</p>
+    <a href="/auth/request" class="btn">Begin with the free tier</a>
+  </div>
+
+  <p class="fee-note">
+    Figures on this page and the board are estimates derived from public exchange data and a
+    standardised cost model — net annualised yield after per-venue taker fees and a slippage
+    provision, benchmarked against the 3-month T-bill rate. Nothing here is financial advice
+    or a projection of future returns. DYOR.
+  </p>
+</main>
+
+<footer>
+  <a href="/">FundScan</a> · <a href="/rates">Live rates</a> · <a href="/auth/request">Sign in</a>
+  — funding rate intelligence, net of costs.
+</footer>
+</body>
+</html>

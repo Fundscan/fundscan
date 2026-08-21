@@ -241,6 +241,7 @@ tr.chart-row td{padding:.5rem 1rem 1.25rem;background:rgba(15,27,48,.4);border-b
           hx-get="/htmx/status" hx-trigger="every 30s" hx-swap="outerHTML">LIVE</span>
     {% if user %}
     <span class="user-pill"><b>{{ user.email }}</b> · {{ user.tier }}</span>
+    <a href="/how-it-works" class="nav-link" style="color:var(--gold)">how it works</a>
     <a href="/export/rates.csv" class="nav-link">↓ CSV</a>
     <a href="/account" class="nav-link">account</a>
     <a href="/auth/logout" class="nav-link">sign out</a>
