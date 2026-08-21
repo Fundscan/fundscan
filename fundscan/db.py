@@ -198,6 +198,50 @@ def query_history(symbol: str, days: int = 7) -> list[sqlite3.Row]:
         ).fetchall()
 
 
+def query_top_performer(days: int = 1, min_points: int = 5) -> dict | None:
+    """
+    The (exchange, symbol) with the highest AVERAGE realized net APY over
+    the window, plus its full time series for charting. Realized average —
+    not the instantaneous headline — so a one-tick spike can't win the
+    board. Series is downsampled to ≤300 points. None if no pair has
+    enough history yet.
+    """
+    with get_conn() as conn:
+        top = conn.execute(
+            """
+            SELECT exchange, symbol, AVG(net_apy) AS avg_net_apy, COUNT(*) AS n
+            FROM funding_snapshots
+            WHERE ts >= datetime('now', ?)
+            GROUP BY exchange, symbol
+            HAVING n >= ?
+            ORDER BY avg_net_apy DESC
+            LIMIT 1
+            """,
+            (f"-{days} days", min_points),
+        ).fetchone()
+        if not top:
+            return None
+        series = conn.execute(
+            """
+            SELECT ts, net_apy
+            FROM funding_snapshots
+            WHERE exchange = ? AND symbol = ? AND ts >= datetime('now', ?)
+            ORDER BY ts ASC
+            """,
+            (top["exchange"], top["symbol"], f"-{days} days"),
+        ).fetchall()
+
+    MAX_PTS = 300
+    step = max(1, len(series) // MAX_PTS)
+    sampled = series[::step]
+    return {
+        "exchange": top["exchange"],
+        "symbol": top["symbol"],
+        "avg_net_apy": top["avg_net_apy"],
+        "points": [{"ts": r["ts"], "net_apy": r["net_apy"]} for r in sampled],
+    }
+
+
 # ---------------------------------------------------------------------------
 # Watchlist helpers
 # ---------------------------------------------------------------------------

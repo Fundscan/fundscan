@@ -185,6 +185,18 @@ tr.chart-row td{padding:.5rem 1rem 1.25rem;background:rgba(15,27,48,.4);border-b
 .note{font-family:var(--mono);font-size:11px;color:var(--mist);margin-top:1.25rem;
       line-height:1.85;letter-spacing:.02em}
 
+/* top performer chart */
+.top-performer{padding:2.5rem 32px 3rem;border-top:1px solid var(--hairline)}
+.tp-head{display:flex;align-items:flex-end;justify-content:space-between;gap:1rem;flex-wrap:wrap;margin-bottom:1rem}
+.tp-title{font-family:var(--serif);font-size:1.6rem;font-weight:600}
+.tp-sub{font-family:var(--mono);font-size:11px;color:var(--mist);letter-spacing:.03em;margin-top:.3rem}
+.tp-headline{font-family:var(--mono);font-size:14px;color:var(--soft);margin-bottom:1rem;min-height:24px}
+.tp-headline b{color:var(--green);font-size:1.35rem;font-weight:500}
+.tp-headline .sym{color:var(--ivory);font-family:var(--sans);font-weight:600;font-size:1.05rem}
+.tp-chart-wrap{background:linear-gradient(180deg,var(--navy-2),rgba(15,27,48,.5));
+  border:1px solid var(--hairline);border-radius:8px;padding:1.25rem 1rem .75rem;position:relative}
+@media(max-width:780px){.top-performer{padding:2rem 18px}}
+
 /* skeleton */
 .skeleton-row td{padding:.7rem 1rem;border-bottom:1px solid rgba(167,178,196,.06)}
 .skel{display:inline-block;height:13px;border-radius:3px;
@@ -366,6 +378,24 @@ tr.chart-row td{padding:.5rem 1rem 1.25rem;background:rgba(15,27,48,.4);border-b
       both legs plus estimated slippage entering and exiting each venue's order book. Liquidity
       reflects the thinner of the two legs.
     </p>
+  </div>
+</div>
+
+<!-- Top performer — big realized-yield chart -->
+<div class="top-performer" id="top-performer-section">
+  <div class="tp-head">
+    <div>
+      <h2 class="tp-title">Top performer</h2>
+      <p class="tp-sub" id="tp-sub">highest average realized net APY — what it actually paid, not what it advertises</p>
+    </div>
+    <div class="filter-tabs" id="tp-tabs">
+      <button class="tab active" data-days="1" onclick="loadTopPerformer(1, this)">24h</button>
+      <button class="tab" data-days="7" onclick="loadTopPerformer(7, this)">7 days</button>
+    </div>
+  </div>
+  <div class="tp-headline" id="tp-headline"><span class="skel" style="width:280px;height:22px"></span></div>
+  <div class="tp-chart-wrap">
+    <canvas id="tp-chart" height="340"></canvas>
   </div>
 </div>
 
@@ -659,7 +689,90 @@ document.body.addEventListener('htmx:afterSwap', e => {
 });
 document.addEventListener('DOMContentLoaded', () => {
   setTimeout(() => { loadSparklines(); applyWatchlistStars(); }, 600);
+  loadTopPerformer(1, document.querySelector('#tp-tabs .tab[data-days="1"]'));
 });
+
+// ── Top performer — big realized-yield chart ────────────────────────────────
+let _tpChart = null;
+
+async function loadTopPerformer(days, btn) {
+  document.querySelectorAll('#tp-tabs .tab').forEach(t => t.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  const headline = document.getElementById('tp-headline');
+  try {
+    const res = await fetch(`/api/top-performer?days=${days}`);
+    const d = await res.json();
+    if (!d.symbol) {
+      headline.innerHTML = '<span style="color:var(--mist)">Not enough history yet — check back after the scanner has run for a while.</span>';
+      if (_tpChart) { _tpChart.destroy(); _tpChart = null; }
+      return;
+    }
+    const label = days === 1 ? '24h' : '7-day';
+    headline.innerHTML =
+      `<span class="sym">${d.symbol}</span> ` +
+      `<span class="exch-badge exch-${d.exchange}">${d.exchange.toUpperCase()}</span> ` +
+      `&nbsp;<b>+${(d.avg_net_apy * 100).toFixed(2)}%</b> ` +
+      `<span style="color:var(--mist)">avg net APY · ${label} realized</span>`;
+
+    const ctx = document.getElementById('tp-chart').getContext('2d');
+    const labels = d.points.map(p => {
+      const t = new Date(p.ts);
+      return days === 1
+        ? t.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'})
+        : t.toLocaleDateString([], {day: 'numeric', month: 'short'}) + ' ' + t.toLocaleTimeString([], {hour: '2-digit'});
+    });
+    const values = d.points.map(p => p.net_apy * 100);
+
+    const grad = ctx.createLinearGradient(0, 0, 0, 340);
+    grad.addColorStop(0, 'rgba(63,190,142,.28)');
+    grad.addColorStop(1, 'rgba(63,190,142,0)');
+
+    if (_tpChart) _tpChart.destroy();
+    _tpChart = new Chart(ctx, {
+      type: 'line',
+      data: { labels, datasets: [{
+        data: values,
+        borderColor: '#3FBE8E',
+        borderWidth: 2,
+        backgroundColor: grad,
+        fill: true,
+        pointRadius: 0,
+        pointHitRadius: 12,
+        tension: .25,
+      }]},
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: {mode: 'index', intersect: false},
+        plugins: {
+          legend: {display: false},
+          tooltip: {
+            backgroundColor: '#16233C',
+            borderColor: 'rgba(201,165,81,.4)',
+            borderWidth: 1,
+            titleFont: {family: "'IBM Plex Mono', monospace", size: 11},
+            bodyFont: {family: "'IBM Plex Mono', monospace", size: 12},
+            callbacks: {label: c => ` net APY ${c.parsed.y.toFixed(2)}%`},
+          },
+        },
+        scales: {
+          x: {
+            grid: {color: 'rgba(167,178,196,.06)'},
+            ticks: {color: '#67748A', font: {family: "'IBM Plex Mono', monospace", size: 10},
+                    maxTicksLimit: 8, maxRotation: 0},
+          },
+          y: {
+            grid: {color: 'rgba(167,178,196,.06)'},
+            ticks: {color: '#67748A', font: {family: "'IBM Plex Mono', monospace", size: 10},
+                    callback: v => v.toFixed(1) + '%'},
+          },
+        },
+      },
+    });
+  } catch (err) {
+    headline.innerHTML = '<span style="color:var(--mist)">Could not load performer data.</span>';
+  }
+}
 </script>
 </body>
 </html>

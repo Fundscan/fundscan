@@ -26,7 +26,7 @@ from . import sizing
 from . import pairing
 from . import signals
 from .backtest import realized_accuracy
-from .db import init_db, insert_snapshots, query_delayed, query_history, query_latest, query_sparklines, get_watchlist, toggle_watchlist, get_conn, checkpoint_wal
+from .db import init_db, insert_snapshots, query_delayed, query_history, query_latest, query_sparklines, query_top_performer, get_watchlist, toggle_watchlist, get_conn, checkpoint_wal
 from .scanner import scan
 from .alerts import (check_and_send_alerts, check_anomalies, send_daily_digest,
                      check_multi_exchange, check_watchlist_drops,
@@ -404,6 +404,20 @@ def api_sparklines():
     Used by the dashboard to draw inline trend sparklines without N+1 fetches.
     """
     return query_sparklines(hours=24)
+
+
+@app.get("/api/top-performer")
+def api_top_performer(days: int = 1):
+    """
+    The pair with the highest average REALIZED net APY over the window
+    (1 = day, 7 = week), with its full series for the big dashboard chart.
+    Realized average, not the instantaneous headline, so a single spike
+    can't claim the title.
+    """
+    if days not in (1, 7):
+        raise HTTPException(400, "days must be 1 or 7")
+    result = query_top_performer(days)
+    return result or {}
 
 
 # ---------------------------------------------------------------------------
