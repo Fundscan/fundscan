@@ -21,6 +21,7 @@ from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse, StreamingResponse, Response
 from fastapi.templating import Jinja2Templates
 
+from . import benchmark
 from . import math as fm
 from . import sizing
 from . import pairing
@@ -416,8 +417,16 @@ def api_top_performer(days: int = 1):
     """
     if days not in (1, 7):
         raise HTTPException(400, "days must be 1 or 7")
-    result = query_top_performer(days)
-    return result or {}
+    result = query_top_performer(days) or {}
+    rf = benchmark.risk_free_rate()
+    if rf is not None:
+        result["risk_free_rate"] = rf
+        live = _state["results"]
+        result["pairs_total"] = len(live)
+        result["pairs_above_cash"] = sum(
+            1 for r in live if r["net_apy"] is not None and r["net_apy"] > rf
+        )
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -606,6 +615,27 @@ def _liquidity_badge(r: dict) -> str:
     return f'<span class="liq-badge liq-{flag}" title="{title}">{_LIQ_LABELS[flag]}</span>'
 
 
+# Curated meme-coin bases for the board's MEMES filter. Includes the
+# k-prefixed 1000x variants Hyperliquid uses (kPEPE = 1000 PEPE).
+MEME_BASES = {
+    "DOGE", "SHIB", "PEPE", "KPEPE", "BONK", "KBONK", "WIF", "FLOKI", "KFLOKI",
+    "MEW", "BOME", "TURBO", "NEIRO", "PENGU", "PUMP", "FARTCOIN", "CASHCAT",
+    "MUBARAK", "SATS", "1000SATS", "HMSTR", "NOT", "LADYS", "MOODENG", "POPCAT",
+    "PNUT", "TRUMP", "MELANIA", "SPX", "GIGA", "MOG", "BRETT", "DOGS", "BABYDOGE",
+}
+
+
+def _is_meme(symbol: str) -> bool:
+    base = symbol.upper()
+    for prefix in ("PF_",):
+        if base.startswith(prefix):
+            base = base[len(prefix):]
+    for suffix in ("-PERP", "USDT", "USD"):
+        if base.endswith(suffix):
+            base = base[: -len(suffix)]
+    return base in MEME_BASES
+
+
 def _render_table_rows(results: list[dict], locked: list[dict] | None = None) -> str:
     if not results and not locked:
         return (
@@ -642,7 +672,7 @@ def _render_table_rows(results: list[dict], locked: list[dict] | None = None) ->
         exch = r["exchange"].upper()
         rows.append(
             f'<tr class="{row_cls}" data-symbol="{r["symbol"]}" data-exchange="{r["exchange"]}"'
-            f' data-apy="{sort_apy}" onclick="toggleChart(this)">'
+            f' data-apy="{sort_apy}" data-meme="{1 if _is_meme(r["symbol"]) else 0}" onclick="toggleChart(this)">'
             f'<td style="padding:.7rem .5rem .7rem .75rem" onclick="event.stopPropagation()">'
             f'<button class="star-btn" id="star-{safe_id}" '
             f'data-symbol="{r["symbol"]}" data-exchange="{r["exchange"]}" '

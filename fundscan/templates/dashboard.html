@@ -293,6 +293,8 @@ tr.chart-row td{padding:.5rem 1rem 1.25rem;background:rgba(15,27,48,.4);border-b
       <button class="tab" data-exchange="{{ ex }}" onclick="setExchange(this)">{{ ex.upper() }}</button>
       {% endfor %}
     </div>
+    <button class="tab" id="meme-tab" onclick="toggleMemeFilter(this)"
+            title="Only meme coins — where funding blows out">MEMES</button>
     <select class="sort-select" id="sort-select" onchange="sortRows()">
       <option value="apy-desc">Net APY ↓</option>
       <option value="apy-asc">Net APY ↑</option>
@@ -403,7 +405,14 @@ tr.chart-row td{padding:.5rem 1rem 1.25rem;background:rgba(15,27,48,.4);border-b
 const activeCharts = {};
 let _sparklineData = {};
 let _activeExchange = 'all';
+let _memeOnly = false;
 let _positionSize = {{ default_position_size }};
+
+function toggleMemeFilter(btn) {
+  _memeOnly = !_memeOnly;
+  btn.classList.toggle('active', _memeOnly);
+  filterRows();
+}
 
 // ── Sparklines ──────────────────────────────────────────────────────────────
 async function loadSparklines() {
@@ -545,9 +554,10 @@ function filterRows() {
     const ex  = (tr.dataset.exchange || '').toLowerCase();
     const matchQ = !q || sym.includes(q);
     const matchEx = _activeExchange === 'all' || ex === _activeExchange;
+    const matchMeme = !_memeOnly || tr.dataset.meme === '1';
     // Also hide/show the paired chart-row
     const chartRow = document.getElementById(`chart-${tr.dataset.symbol}-${tr.dataset.exchange}`);
-    const hide = !(matchQ && matchEx);
+    const hide = !(matchQ && matchEx && matchMeme);
     tr.style.display = hide ? 'none' : '';
     if (!hide) visible++;
     if (chartRow) chartRow.style.display = 'none'; // collapse on filter
@@ -581,7 +591,7 @@ function filterRows() {
 // say so — market-wide numbers above a filtered table read as if they belong
 // to the filter.
 function _filterActive() {
-  return document.getElementById('search').value.trim() !== '' || _activeExchange !== 'all';
+  return document.getElementById('search').value.trim() !== '' || _activeExchange !== 'all' || _memeOnly;
 }
 function updateStatsCards() {
   const cards = document.querySelectorAll('#stats-section .stat-card');
@@ -708,11 +718,23 @@ async function loadTopPerformer(days, btn) {
       return;
     }
     const label = days === 1 ? '24h' : '7-day';
+    let cashBit = '';
+    if (d.risk_free_rate != null) {
+      const spread = (d.avg_net_apy - d.risk_free_rate) * 100;
+      cashBit = ` <span style="color:var(--mist)">· ${spread >= 0 ? '+' : ''}${spread.toFixed(1)} pts vs cash</span>`;
+    }
     headline.innerHTML =
       `<span class="sym">${d.symbol}</span> ` +
       `<span class="exch-badge exch-${d.exchange}">${d.exchange.toUpperCase()}</span> ` +
       `&nbsp;<b>+${(d.avg_net_apy * 100).toFixed(2)}%</b> ` +
-      `<span style="color:var(--mist)">avg net APY · ${label} realized</span>`;
+      `<span style="color:var(--mist)">avg net APY · ${label} realized</span>` + cashBit;
+
+    if (d.risk_free_rate != null && d.pairs_total) {
+      document.getElementById('tp-sub').textContent =
+        `highest average realized net APY — what it actually paid, not what it advertises · ` +
+        `cash (3M T-bills) pays ${(d.risk_free_rate * 100).toFixed(2)}% · ` +
+        `${d.pairs_above_cash} of ${d.pairs_total} pairs beat it right now`;
+    }
 
     const ctx = document.getElementById('tp-chart').getContext('2d');
     const labels = d.points.map(p => {
@@ -727,19 +749,34 @@ async function loadTopPerformer(days, btn) {
     grad.addColorStop(0, 'rgba(63,190,142,.28)');
     grad.addColorStop(1, 'rgba(63,190,142,0)');
 
+    const datasets = [{
+      label: d.symbol,
+      data: values,
+      borderColor: '#3FBE8E',
+      borderWidth: 2,
+      backgroundColor: grad,
+      fill: true,
+      pointRadius: 0,
+      pointHitRadius: 12,
+      tension: .25,
+    }];
+    if (d.risk_free_rate != null) {
+      datasets.push({
+        label: 'cash (3M T-bills)',
+        data: labels.map(() => d.risk_free_rate * 100),
+        borderColor: '#C9A551',
+        borderWidth: 1.5,
+        borderDash: [6, 6],
+        fill: false,
+        pointRadius: 0,
+        pointHitRadius: 0,
+      });
+    }
+
     if (_tpChart) _tpChart.destroy();
     _tpChart = new Chart(ctx, {
       type: 'line',
-      data: { labels, datasets: [{
-        data: values,
-        borderColor: '#3FBE8E',
-        borderWidth: 2,
-        backgroundColor: grad,
-        fill: true,
-        pointRadius: 0,
-        pointHitRadius: 12,
-        tension: .25,
-      }]},
+      data: { labels, datasets },
       options: {
         responsive: true,
         maintainAspectRatio: false,
