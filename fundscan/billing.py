@@ -98,17 +98,27 @@ def log_webhook_event(event_type: str, payload: dict) -> None:
     with get_conn() as conn:
         conn.execute(
             "INSERT INTO webhook_events (received_at, event_type, payload) VALUES (?, ?, ?)",
-            (datetime.now(timezone.utc).isoformat(), event_type, json.dumps(payload)),
+            # default=str: nested Stripe objects/timestamps must degrade to
+            # strings rather than turn an audit log write into a crash.
+            (datetime.now(timezone.utc).isoformat(), event_type, json.dumps(payload, default=str)),
         )
 
 
 def handle_webhook(event: stripe.Event) -> None:
-    """Process a verified Stripe webhook event."""
-    event_type = event["type"]
-    log_webhook_event(event_type, dict(event))
+    """
+    Process a verified Stripe webhook event.
+
+    First move: convert to a plain dict. Modern stripe-python (>=7) Event
+    objects are NOT dicts -- dict(event) raises TypeError and .get() raises
+    AttributeError. Every webhook delivery 500'd on exactly that until
+    2026-08-21 (test doubles were plain dicts, so the suite never saw it).
+    """
+    data = event.to_dict() if hasattr(event, "to_dict") else dict(event)
+    event_type = data["type"]
+    log_webhook_event(event_type, data)
 
     if event_type == "checkout.session.completed":
-        obj = event["data"]["object"]
+        obj = data["data"]["object"]
         # client_reference_id is the email we set at checkout creation
         email = obj.get("client_reference_id") or obj.get("customer_email")
         if email:
@@ -116,16 +126,18 @@ def handle_webhook(event: stripe.Event) -> None:
             notify_new_signup(email)
             log.info("checkout.session.completed → %s tier=pro", email)
         else:
-            log.warning("checkout.session.completed missing email, event id=%s", event["id"])
+            log.warning("checkout.session.completed missing email, event id=%s", data.get("id"))
 
     elif event_type == "customer.subscription.deleted":
         # Subscription cancelled/expired — downgrade user
-        customer_id = event["data"]["object"].get("customer")
+        customer_id = data["data"]["object"].get("customer")
         if customer_id:
             try:
                 stripe.api_key = STRIPE_SECRET_KEY
                 customer = stripe.Customer.retrieve(customer_id)
-                email = customer.get("email")
+                # Attribute access is the supported style on StripeObjects;
+                # .get() is not (see docstring).
+                email = getattr(customer, "email", None)
                 if email in COMP_PRO_EMAILS:
                     # Comped accounts keep Pro regardless of Stripe state --
                     # downgrading here would fire a false churn alert and
@@ -139,7 +151,7 @@ def handle_webhook(event: stripe.Event) -> None:
                 log.error("Failed to retrieve customer %s: %s", customer_id, e)
 
     elif event_type == "invoice.payment_failed":
-        obj = event["data"]["object"]
+        obj = data["data"]["object"]
         email = obj.get("customer_email")
         log.warning("Payment failed for %s (invoice %s)", email, obj.get("id"))
         if email:

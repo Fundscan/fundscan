@@ -1100,7 +1100,9 @@ async def billing_webhook(request: Request):
     try:
         handle_webhook(event)
     except Exception as e:
-        log.error("handle_webhook failed for %s: %s", event.get("type"), e)
+        # getattr, not .get(): stripe Events aren't dicts, and an exception
+        # inside this handler is exactly how every delivery 500'd pre-fix.
+        log.error("handle_webhook failed for %s: %s", getattr(event, "type", "?"), e)
         # Return 200 anyway — Stripe will retry on 4xx/5xx
 
     return {"ok": True}

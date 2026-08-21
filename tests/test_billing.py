@@ -72,8 +72,10 @@ def test_subscription_deleted_sets_free():
 
     set_user_tier("subscriber@example.com", "pro")
 
+    # Attribute access, not .get(): stripe Customer objects aren't dicts —
+    # the handler reads customer.email (see billing.py regression note).
     fake_customer = MagicMock()
-    fake_customer.get = lambda k, d=None: "subscriber@example.com" if k == "email" else d
+    fake_customer.email = "subscriber@example.com"
 
     event = _make_event("customer.subscription.deleted", {"customer": "cus_fake123"})
 
@@ -121,3 +123,41 @@ def test_unknown_event_no_crash():
     event = _make_event("some.unknown.event", {"foo": "bar"})
     with patch("fundscan.billing.log_webhook_event"):
         handle_webhook(event)  # should not raise
+
+
+# ---------------------------------------------------------------------------
+# Regression: REAL stripe Event objects, not dict doubles.
+# Modern stripe-python Events aren't dicts: dict(event) raises TypeError and
+# .get() raises AttributeError. Every production webhook delivery 500'd on
+# exactly this until 2026-08-21 while the dict-double tests above stayed
+# green. This test pins the real object type through the full handler.
+# ---------------------------------------------------------------------------
+
+def test_real_stripe_event_object_checkout_completed():
+    import stripe
+    from fundscan.billing import handle_webhook
+    from fundscan.auth import get_or_create_user, set_user_tier
+
+    set_user_tier("subscriber@example.com", "free")
+    event = stripe.Event.construct_from(
+        {
+            "id": "evt_real_obj",
+            "object": "event",
+            "type": "checkout.session.completed",
+            "data": {"object": {
+                "id": "cs_real_obj",
+                "object": "checkout.session",
+                "client_reference_id": "subscriber@example.com",
+                "customer_email": "subscriber@example.com",
+            }},
+        },
+        "sk_test_fake",
+    )
+    # Sanity: this really is the non-dict shape that broke production
+    with pytest.raises(TypeError):
+        dict(event)
+
+    with patch("fundscan.billing.notify_new_signup"):
+        handle_webhook(event)  # must not raise
+
+    assert get_or_create_user("subscriber@example.com")["tier"] == "pro"
